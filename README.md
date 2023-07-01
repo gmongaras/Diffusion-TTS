@@ -17,13 +17,25 @@ RoVoLaD - Robot voice to stylized voice latent diffusion model
 
 
 # Datasets
-- Multilingual LibriSpeech (MLS) - https://www.openslr.org/94/
-- Gigaspeech: https://github.com/SpeechColab/GigaSpeech
+The main goal is to produce speech in anyone's voice. So, we need as diverse of a dataset as possible. Diversity is prioritized over quantity.
+1. VCTK: [https://huggingface.co/datasets/vctk](https://datashare.ed.ac.uk/handle/10283/2651)
+2. Multilingual LibriSpeech (MLS) - https://www.openslr.org/94/
+3. Improved LibriTTS - https://openslr.org/141/
+4. Gigaspeech: https://github.com/SpeechColab/GigaSpeech
+
+# Datasets Sampling
+Since we are going to be using multiple datasets, we need to sample in a way that doesn't bias toward certain speakers:
+
+For each epoch:
+1. Sample N random speakers from the dataset
+2. Sample a few random utterances from each speaker
+3. This is now a batch for a single training step.
 
 # Papers
 - Stable Diffusion - https://arxiv.org/abs/2112.10752
 - Meta Voicebox - https://ai.facebook.com/blog/voicebox-generative-ai-model-speech/
 - Natural Speech 2 - https://speechresearch.github.io/naturalspeech2/
+- YourTTS - https://arxiv.org/abs/2112.02418
 
 - Encodec - https://arxiv.org/abs/2210.13438
 - MusicGen - https://arxiv.org/abs/2306.05284

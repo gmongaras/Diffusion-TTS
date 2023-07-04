@@ -13,7 +13,9 @@
 
             // "program": "${file}",
 
-            "module": "src.encodec.modules.seanet",
+            // "module": "src.encodec.modules.seanet",
+
+            "module": "src.train",
 
 
 

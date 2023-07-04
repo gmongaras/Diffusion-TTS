@@ -60,7 +60,10 @@ class SEANetResnetBlock(nn.Module):
                                     causal=causal, pad_mode=pad_mode)
 
     def forward(self, x):
-        return self.shortcut(x) + self.block(x)
+        res = self.shortcut(x)
+        x = self.block(x)
+        return res+x
+        # return self.shortcut(x) + self.block(x)
 
 
 class SEANetEncoder(nn.Module):
@@ -141,6 +144,9 @@ class SEANetEncoder(nn.Module):
         self.model = nn.Sequential(*model)
 
     def forward(self, x):
+        # for m in self.model:
+        #     x = m(x)
+        # return x
         return self.model(x)
 
 

@@ -60,7 +60,10 @@ class SEANetResnetBlock(nn.Module):
                                     causal=causal, pad_mode=pad_mode)
 
     def forward(self, x):
-        return self.shortcut(x) + self.block(x)
+        res = self.shortcut(x)
+        x = self.block(x)
+        return res+x
+        # return self.shortcut(x) + self.block(x)
 
 
 class SEANetEncoder(nn.Module):
@@ -141,6 +144,9 @@ class SEANetEncoder(nn.Module):
         self.model = nn.Sequential(*model)
 
     def forward(self, x):
+        # for m in self.model:
+        #     x = m(x)
+        # return x
         return self.model(x)
 
 
@@ -240,11 +246,12 @@ class SEANetDecoder(nn.Module):
 
 def test():
     import torch
-    encoder = SEANetEncoder()
-    decoder = SEANetDecoder()
-    x = torch.randn(1, 1, 24000)
+    encoder = SEANetEncoder().cuda()
+    decoder = SEANetDecoder().cuda()
+    N = 100
+    x = torch.randn(N, 1, 24000).cuda()
     z = encoder(x)
-    assert list(z.shape) == [1, 128, 75], z.shape
+    assert list(z.shape) == [N, 128, 75], z.shape
     y = decoder(z)
     assert y.shape == x.shape, (x.shape, y.shape)
 

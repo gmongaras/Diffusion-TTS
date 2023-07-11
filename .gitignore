@@ -1,3 +1,8 @@
+Small_Dataset/
+audio_dataset/
+audio/
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

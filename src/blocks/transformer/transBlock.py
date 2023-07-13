@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from src.blocks.MultiHeadAttention import MultiHeadAttention
+from src.blocks.transformer.MultiHeadAttention import MultiHeadAttention
 
 
 

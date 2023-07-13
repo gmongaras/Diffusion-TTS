@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-from src.blocks.transBlock import transBlock
-from src.blocks.PositionalEncoding import PositionalEncoding
+from src.blocks.transformer.transBlock import transBlock
+from src.blocks.transformer.PositionalEncoding import PositionalEncoding
 
 
 

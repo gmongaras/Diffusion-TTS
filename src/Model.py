@@ -6,6 +6,7 @@ import numpy as np
 from transformers import EncodecModel, AutoProcessor
 from TTS.api import TTS
 from src.models.Transformer import Transformer
+from src.models.U_Net import U_Net
 
 
 
@@ -30,6 +31,7 @@ class Model():
         
         # Transformer model to train
         self.model = Transformer(128, 128, 128, 4).cuda()
+        self.model2 = U_Net(128, 128, 128, 1, 128, num_blocks=2, blk_types=["res", "res"]).cuda()
         
         
         
@@ -62,6 +64,7 @@ class Model():
     def train(self, dataloader):
         # Optimzer
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=5e-4)
+        optimizer2 = torch.optim.AdamW(self.model2.parameters(), lr=5e-4)
         
         # Loss function
         loss_fn = torch.nn.MSELoss()
@@ -115,16 +118,21 @@ class Model():
             
             # Forward pass
             unstylized_audio_recon = self.model(encoder_outputs_unstylized.clone().cuda(), encoder_outputs_stylized.clone().cuda())
+            unstylized_audio_recon2 = self.model2(encoder_outputs_unstylized.permute(0, 2, 1).clone().cuda())
             
             # Compute loss
             loss = loss_fn(encoder_outputs_stylized, unstylized_audio_recon)
+            loss2 = loss_fn(encoder_outputs_stylized, unstylized_audio_recon2.permute(0, 2, 1))
             
             # Backward pass
             optimizer.zero_grad()
+            optimizer2.zero_grad()
             loss.backward()
+            loss2.backward()
             optimizer.step()
+            optimizer2.step()
             
-            print(f"Epoch: {epoch} | Loss: {loss.item()}")
+            print(f"Epoch: {epoch} | Loss: {loss.item()} | Loss2: {loss2.item()}")
             
             
         output = self.encodec_model.decoder(unstylized_audio_recon.transpose(1, 2))[0]

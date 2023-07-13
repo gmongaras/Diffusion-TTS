@@ -1,31 +1,84 @@
 from datasets import load_dataset, Audio
-from transformers import EncodecModel, AutoProcessor
-import numpy as np
 import torch
 import torchaudio
-from TTS.api import TTS
+import os
+from torch.utils.data import Dataset, DataLoader
 from src.Model import Model
+
+
+
+
+class WavDataset(Dataset):
+    def __init__(self, root_dir, load_in_memory=False):
+        self.load_in_memory = load_in_memory
+        self.file_list = [os.path.join(root_dir, f) for f in os.listdir(root_dir) if f.endswith('.wav')]
+        if self.load_in_memory:
+            self.data = [torchaudio.load(f) for f in self.file_list]
+
+    def __len__(self):
+        return len(self.file_list)
+
+    def __getitem__(self, idx):
+        # Get the waveform and sample rate from memory
+        if self.load_in_memory:
+            waveform, sample_rate = self.data[idx]
+        else:
+            waveform, sample_rate = torchaudio.load(self.file_list[idx])
+        
+        # Resample audio to 16000 Hz
+        if sample_rate != 16000:
+            waveform = torchaudio.transforms.Resample(sample_rate, 16000)
+        
+        # # Breakup the audio into overlapping segments of 1 second
+        # # Overlap by 0.25 seconds
+        # if waveform.shape[1] > 16000:
+        #     waveform = waveform.unfold(-1, 16000, 12000).transpose(0, 1)
+        # else:
+        #     # Pad waveform to 16000
+        #     waveform = torch.nn.functional.pad(waveform, (0, 16000 - waveform.shape[1])).unsqueeze(0)
+        
+        return waveform
+
 
 
 
 
 
 def train():
-    # Get the TTS model
-    model_name = 'tts_models/en/ljspeech/speedy-speech'
-    tts = TTS(model_name, gpu=False)
-    # Sampling rate
-    sampling_rate = 22050
+    data_path = "audio_dataset/data"
+    batch_size = 2
+    num_workers = 0
     
     
-    # load the model + processor (for pre-processing the audio)
-    encodec_model = EncodecModel.from_pretrained("facebook/encodec_24khz").eval().cuda()
-    processor = AutoProcessor.from_pretrained("facebook/encodec_24khz")
-    
-    # Get the quantizer from the model
-    quantizer = encodec_model.quantizer
     
     
+    
+     # Create the WAVDataset
+    dataset = WavDataset(data_path)
+    
+    # Create the DataLoader
+    dataloader = DataLoader(dataset, 
+                            batch_size=batch_size, 
+                            shuffle=True, 
+                            num_workers=num_workers, 
+                            collate_fn=lambda x: x
+    )
+    
+    
+    
+    
+    # Create the main model
+    model = Model()
+    
+    
+    
+    
+    # Train the model
+    model.train(dataloader)
+    
+    
+    
+    exit()
     
     
     
@@ -55,27 +108,7 @@ def train():
     
     
     
-    # Preporcess the audio segments
-    stylized_audio = processor(stylized_audio.tolist(), sampling_rate=24000, return_tensors="pt")
-    unstylized_audio = processor(unstylized_audio.tolist(), sampling_rate=24000, return_tensors="pt")
     
-    
-    # Encode inputs
-    encoder_outputs_stylized = encodec_model.encode(stylized_audio["input_values"].cuda(), stylized_audio["padding_mask"].cuda(), bandwidth=24.0)
-    encoder_outputs_unstylized = encodec_model.encode(unstylized_audio["input_values"].cuda(), unstylized_audio["padding_mask"].cuda(), bandwidth=24.0)
-
-    # Decode inputs
-    stylized_audio_recon = encodec_model.decode(encoder_outputs_stylized.audio_codes, encoder_outputs_stylized.audio_scales, stylized_audio["padding_mask"].cuda())[0]
-    unstylized_audio_recon = encodec_model.decode(encoder_outputs_unstylized.audio_codes, encoder_outputs_unstylized.audio_scales, unstylized_audio["padding_mask"].cuda())[0]
-    encoder_outputs_stylized = encoder_outputs_stylized.audio_codes
-    encoder_outputs_unstylized = encoder_outputs_unstylized.audio_codes
-    
-    
-    
-    # Dequantize the outputs.
-    # Note the quantizer expects inputs to be of shape (CB, B, T)
-    encoder_outputs_stylized = quantizer.decode(encoder_outputs_stylized.squeeze().transpose(0, 1))
-    encoder_outputs_unstylized = quantizer.decode(encoder_outputs_unstylized.squeeze().transpose(0, 1))
     
     
     
@@ -118,43 +151,14 @@ def train():
     # model = Model(32).cuda()
     
     
-    # Create the model
-    from src.models.Transformer import Transformer
-    model = Transformer(128, 128, 4).cuda()
     
-    # Optimzer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-4)
     
-    # Loss function
-    loss_fn = torch.nn.MSELoss()
-    
-    for epoch in range(0, 10000):
-        # Pad the unstlyized audio to the same length as the stylized audio
-        padding_pre = (encoder_outputs_stylized.shape[1] - encoder_outputs_unstylized.shape[1])//2
-        padding_post = (encoder_outputs_stylized.shape[1] - encoder_outputs_unstylized.shape[1]) - padding_pre
-        encoder_outputs_unstylized = torch.nn.functional.pad(encoder_outputs_unstylized, (0, 0, padding_pre, padding_post))
-        
-        # Forward pass
-        unstylized_audio_recon = model(encoder_outputs_unstylized.cuda(), text.cuda())
-        
-        # Compute loss
-        loss = loss_fn(encoder_outputs_stylized, unstylized_audio_recon)
-        
-        # Backward pass
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        
-        print(f"Epoch: {epoch} | Loss: {loss.item()}")
     
     # output = get_output(
     #     encoder_outputs_unstylized, encoder_outputs_unstylized.audio_scales, unstylized_audio["padding_mask"].cuda()
     # )
     
-    output = encodec_model.decoder(unstylized_audio_recon.transpose(1, 2))[0]
-    torchaudio.save("test.wav", output.cpu(), 24000)
-    print()
-
+    
 
 
 

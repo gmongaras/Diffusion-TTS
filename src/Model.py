@@ -31,7 +31,7 @@ class Model():
         
         # Transformer model to train
         self.model = Transformer(128, 128, 128, 4).cuda()
-        self.model2 = U_Net(128, 128, 128, 1, 128, num_blocks=2, blk_types=["res", "res"]).cuda()
+        self.model2 = U_Net(128, 128, 128, 1, num_blocks=2, blk_types=["res", "cond", "res"], cond_dim=128).cuda()
         
         
         
@@ -118,7 +118,7 @@ class Model():
             
             # Forward pass
             unstylized_audio_recon = self.model(encoder_outputs_unstylized.clone().cuda(), encoder_outputs_stylized.clone().cuda())
-            unstylized_audio_recon2 = self.model2(encoder_outputs_unstylized.permute(0, 2, 1).clone().cuda())
+            unstylized_audio_recon2 = self.model2(encoder_outputs_unstylized.permute(0, 2, 1).clone().cuda(), encoder_outputs_stylized.permute(0, 2, 1).clone().cuda().repeat(1, 1, 2))
             
             # Compute loss
             loss = loss_fn(encoder_outputs_stylized, unstylized_audio_recon)

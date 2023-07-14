@@ -99,15 +99,17 @@ class ResnetBlock(nn.Module):
     is projected using a linear layer and SiLU layer
     before entering the residual block
     """
-    def __init__(self, inCh, outCh, t_dim, c_dim=None, dropoutRate=0.0):
+    def __init__(self, inCh, outCh, cond_dim=None, t_dim=None, dropoutRate=0.0):
         # Projections with time and class info
         super().__init__()
         self.t_mlp = (
             nn.Sequential(nn.SiLU(), nn.Linear(t_dim, outCh))
+            if exists(t_dim)
+            else None
         )
         self.c_mlp = (
-            nn.Sequential(nn.SiLU(), nn.Linear(c_dim, outCh))
-            if exists(c_dim)
+            nn.Sequential(nn.SiLU(), nn.Linear(cond_dim, outCh))
+            if exists(cond_dim)
             else None
         )
 

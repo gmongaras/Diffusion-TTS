@@ -14,12 +14,13 @@ class ConditionalBlock(nn.Module):
         self.cond_dim = cond_dim
         self.embed_dim = embed_dim
         
-        self.attn1 = MultiHeadAttention(embed_dim, 1, query_dim=cond_dim, key_dim=embed_dim, value_dim=embed_dim, output_dim=embed_dim)
+        self.attn1 = MultiHeadAttention(embed_dim, 8, query_dim=cond_dim, key_dim=embed_dim, value_dim=embed_dim, output_dim=embed_dim)
         self.layer_norm1 = nn.GroupNorm(1, embed_dim)
         
         self.resBlock = ResnetBlock(embed_dim, embed_dim)
         
-        self.attn2 = MultiHeadAttention(embed_dim, 1, query_dim=cond_dim, key_dim=embed_dim, value_dim=embed_dim, output_dim=embed_dim)
+        self.attn2 = MultiHeadAttention(embed_dim, 8, query_dim=cond_dim, key_dim=embed_dim, value_dim=embed_dim, output_dim=embed_dim)
+        self.layer_norm2 = nn.GroupNorm(1, embed_dim)
         
         
     def forward(self, x, y):
@@ -35,5 +36,5 @@ class ConditionalBlock(nn.Module):
         
         # Second MHA, cross where the keys are the conditional information,
         # the queries are the input and the values are the output of the resnet block
-        return self.attn2(y, res, x) + res
+        return self.layer_norm2(self.attn2(y, res, x) + res)
         

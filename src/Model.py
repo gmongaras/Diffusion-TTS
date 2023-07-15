@@ -30,8 +30,12 @@ class Model():
         
         
         # Transformer model to train
-        self.model = Transformer(128, 128, 128, 4).cuda()
+        self.model = Transformer(128, 128, 512, 8).cuda()
         self.model2 = U_Net(128, 128, 128, 1, num_blocks=2, blk_types=["res", "cond", "res"], cond_dim=128).cuda()
+        
+        # Paramater counts
+        print("Transformer model has {} parameters".format(sum(p.numel() for p in self.model.parameters() if p.requires_grad)))
+        print("U-Net model has {} parameters".format(sum(p.numel() for p in self.model2.parameters() if p.requires_grad)))
         
         
         
@@ -39,22 +43,22 @@ class Model():
         
     def process_data(self, audio_segment):
         # Preporcess the audio segments
-        audio_segment = self.processor(audio_segment.tolist(), sampling_rate=24000, return_tensors="pt")
+        audio_segment = self.processor(audio_segment.squeeze(1).tolist(), sampling_rate=24000, return_tensors="pt")
         
         
         # Encode inputs
-        encoude_outputs = self.encodec_model.encode(audio_segment["input_values"].cuda(), audio_segment["padding_mask"].cuda(), bandwidth=24.0)
-        encoude_outputs = encoude_outputs.audio_codes
+        encoded_outputs = self.encodec_model.encode(audio_segment["input_values"].cuda(), audio_segment["padding_mask"].cuda(), bandwidth=24.0)
+        encoded_outputs = encoded_outputs.audio_codes
         
         
         # Dequantize the outputs.
         # Note the quantizer expects inputs to be of shape (CB, B, T)
-        encoude_outputs = self.quantizer.decode(encoude_outputs.squeeze().transpose(0, 1))
+        encoded_outputs = self.quantizer.decode(encoded_outputs.squeeze(0).transpose(0, 1))
         
         # Transpose the inputs to (B, T, E)
-        encoude_outputs = encoude_outputs.squeeze().transpose(1, 2).float().cuda()
+        encoded_outputs = encoded_outputs.transpose(1, 2).float().cuda()
         
-        return encoude_outputs
+        return encoded_outputs
         
         
         
@@ -75,28 +79,28 @@ class Model():
         
         
         
-        stylized_audio, stylized_sr = torchaudio.load("notebooks/sample.wav")
+        # stylized_audio, stylized_sr = torchaudio.load("notebooks/sample.wav")
 
-        # Text for this audio
-        text = "Mr. Quilter is the Apostle of the Middle Class and we are glad to welcome his gospel."
+        # # Text for this audio
+        # text = "Mr. Quilter is the Apostle of the Middle Class and we are glad to welcome his gospel."
         
-        # Generate an unstylized audio clip based off the same text
-        unstylized_audio = torch.tensor(self.tts.tts(text)).float()
-        sr = 22050
+        # # Generate an unstylized audio clip based off the same text
+        # unstylized_audio = torch.tensor(self.tts.tts(text)).float()
+        # sr = 22050
         
-        # Batch the audio
-        stylized_audio = stylized_audio.repeat(2, 1, 1)
-        unstylized_audio = unstylized_audio.repeat(2, 1, 1)
+        # # Batch the audio
+        # stylized_audio = stylized_audio.repeat(2, 1, 1)
+        # unstylized_audio = unstylized_audio.repeat(2, 1, 1)
         
-        # Resample both audio clips to 24khz
-        stylized_audio = torchaudio.transforms.Resample(stylized_sr, 24000)(stylized_audio).squeeze()
-        unstylized_audio = torchaudio.transforms.Resample(sr, 24000)(unstylized_audio).squeeze()
+        # # Resample both audio clips to 24khz
+        # stylized_audio = torchaudio.transforms.Resample(stylized_sr, 24000)(stylized_audio).squeeze()
+        # unstylized_audio = torchaudio.transforms.Resample(sr, 24000)(unstylized_audio).squeeze()
         
 
         
         
-        encoder_outputs_stylized = self.process_data(stylized_audio)
-        encoder_outputs_unstylized = self.process_data(unstylized_audio)
+        # encoder_outputs_stylized = self.process_data(stylized_audio)
+        # encoder_outputs_unstylized = self.process_data(unstylized_audio)
         
         
         
@@ -105,35 +109,68 @@ class Model():
         
         
         for epoch in range(0, 10000):
-            # Get a batch of data
-            # stylized_audio, unstylized_audio, text = next(iter(dataloader))
+            # Total batch loss
+            batch_loss_1 = 0
+            batch_loss_2 = 0
             
-            # encoder_outputs_stylized = self.process_data(stylized_audio)
-            # encoder_outputs_unstylized = self.process_data(unstylized_audio)
-            
-            # Pad the unstlyized audio to the same length as the stylized audio
-            padding_pre = (encoder_outputs_stylized.shape[1] - encoder_outputs_unstylized.shape[1])//2
-            padding_post = (encoder_outputs_stylized.shape[1] - encoder_outputs_unstylized.shape[1]) - padding_pre
-            encoder_outputs_unstylized = torch.nn.functional.pad(encoder_outputs_unstylized, (0, 0, padding_pre, padding_post))
-            
-            # Forward pass
-            unstylized_audio_recon = self.model(encoder_outputs_unstylized.clone().cuda(), encoder_outputs_stylized.clone().cuda())
-            unstylized_audio_recon2 = self.model2(encoder_outputs_unstylized.permute(0, 2, 1).clone().cuda(), encoder_outputs_stylized.permute(0, 2, 1).clone().cuda().repeat(1, 1, 2))
-            
-            # Compute loss
-            loss = loss_fn(encoder_outputs_stylized, unstylized_audio_recon)
-            loss2 = loss_fn(encoder_outputs_stylized, unstylized_audio_recon2.permute(0, 2, 1))
-            
-            # Backward pass
-            optimizer.zero_grad()
-            optimizer2.zero_grad()
-            loss.backward()
-            loss2.backward()
-            optimizer.step()
-            optimizer2.step()
-            
-            print(f"Epoch: {epoch} | Loss: {loss.item()} | Loss2: {loss2.item()}")
-            
+            # Iterate over the batches of data
+            for batch in dataloader:
+                # Get a batch of data
+                stylized_audio = [x[0] for x in batch]
+                unstylized_audio = [x[1] for x in batch]
+                text = [x[2] for x in batch]
+                conditional_audio = [x[3] for x in batch]
+                
+                # Max lengths for each type of audio
+                stylized_max_length = max([x.shape[1] for x in stylized_audio])
+                unstylized_max_length = max([x.shape[1] for x in unstylized_audio])
+                conditional_max_length = max([x.shape[1] for x in conditional_audio])
+                
+                # Pad all audio to max lengths
+                stylized_audio = torch.stack([torch.nn.functional.pad(a, (0, stylized_max_length - a.shape[1], 0, 0)) for a in stylized_audio])
+                unstylized_audio = torch.stack([torch.nn.functional.pad(a, (0, unstylized_max_length - a.shape[1], 0, 0)) for a in unstylized_audio])
+                conditional_audio = torch.stack([torch.nn.functional.pad(a, (0, conditional_max_length - a.shape[1], 0, 0)) for a in conditional_audio])
+                
+                # Encode the audio using encodec
+                encoder_outputs_stylized = self.process_data(stylized_audio)
+                encoder_outputs_unstylized = self.process_data(unstylized_audio)
+                if conditional_audio is not None:
+                    encoder_outputs_conditional = self.process_data(unstylized_audio)
+                
+                if encoder_outputs_stylized.shape[1] < encoder_outputs_unstylized.shape[1]:
+                    # Pad the stlyized audio to the same length as the unstylized audio
+                    padding_pre = (encoder_outputs_unstylized.shape[1] - encoder_outputs_stylized.shape[1])//2
+                    padding_post = (encoder_outputs_unstylized.shape[1] - encoder_outputs_stylized.shape[1]) - padding_pre
+                    encoder_outputs_stylized = torch.nn.functional.pad(encoder_outputs_stylized, (0, 0, padding_pre, padding_post))
+                else:
+                    # Pad the unstlyized audio to the same length as the stylized audio
+                    padding_pre = (encoder_outputs_stylized.shape[1] - encoder_outputs_unstylized.shape[1])//2
+                    padding_post = (encoder_outputs_stylized.shape[1] - encoder_outputs_unstylized.shape[1]) - padding_pre
+                    encoder_outputs_unstylized = torch.nn.functional.pad(encoder_outputs_unstylized, (0, 0, padding_pre, padding_post))
+                    
+                # Forward pass
+                unstylized_audio_recon = self.model(encoder_outputs_unstylized.clone().cuda(), encoder_outputs_conditional.clone().cuda() if conditional_audio is not None else None)
+                unstylized_audio_recon2 = self.model2(encoder_outputs_unstylized.permute(0, 2, 1).clone().cuda(), encoder_outputs_conditional.permute(0, 2, 1).clone().cuda() if conditional_audio is not None else None)
+                
+                # Compute loss
+                loss = loss_fn(encoder_outputs_stylized, unstylized_audio_recon)
+                loss2 = loss_fn(encoder_outputs_stylized, unstylized_audio_recon2.permute(0, 2, 1))
+                
+                # Backward pass
+                optimizer.zero_grad()
+                optimizer2.zero_grad()
+                loss.backward()
+                loss2.backward()
+                optimizer.step()
+                optimizer2.step()
+                
+                print(f"Epoch: {epoch} | Loss: {loss.item()} | Loss2: {loss2.item()}")
+                
+                batch_loss_1 += loss.item()
+                batch_loss_2 += loss2.item()
+                
+            print(f"Epoch: {epoch} | Batch Loss: {batch_loss_1/len(dataloader)} | Batch Loss2: {batch_loss_2/len(dataloader)}")
+                
             
         output = self.encodec_model.decoder(unstylized_audio_recon.transpose(1, 2))[0]
         torchaudio.save("test.wav", output.cpu(), 24000)

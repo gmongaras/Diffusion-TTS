@@ -151,7 +151,7 @@ class U_Net(nn.Module):
                 X = self.upBlocks[b](X)
                 b += 1
             if len(residuals) > 0:
-                X = self.upBlocks[b](torch.cat((X, residuals[0]), dim=1), y, t)
+                X = self.upBlocks[b](torch.cat((X[:, :, :residuals[0].shape[-1]], residuals[0]), dim=1), y, t)
             else:
                 X = self.upBlocks[b](X, y, t)
             b += 1

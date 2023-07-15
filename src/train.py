@@ -4,6 +4,9 @@ import torchaudio
 import os
 from torch.utils.data import Dataset, DataLoader
 from src.Model import Model
+from TTS.api import TTS
+import sys
+import random
 
 
 
@@ -11,23 +14,140 @@ from src.Model import Model
 class WavDataset(Dataset):
     def __init__(self, root_dir, load_in_memory=False):
         self.load_in_memory = load_in_memory
-        self.file_list = [os.path.join(root_dir, f) for f in os.listdir(root_dir) if f.endswith('.wav')]
+        
+        # List of all data as a three part tuple:
+        # (wav file, text file, tts output)
+        self.data = []
+        
+        # Map speaker to indices of their data
+        self.speaker_map = {}
+        
+        # Map data index to speaker ID and data index for that speaker
+        self.reverse_idx = []
+        
+        # Iterate over all speakers in the directory
+        self.total = 0
+        for speaker in os.listdir(root_dir):
+            # Iterate over all the audio files
+            for f in os.listdir(os.path.join(root_dir, speaker)):
+                # If the file is a wav file, add it to the dataset along with its corresponding text file
+                if f.endswith('.wav'):
+                    if not speaker in self.speaker_map:
+                        self.speaker_map[speaker] = []
+                        
+                    # Speaker to index in data
+                    self.speaker_map[speaker].append(self.total)
+                    
+                    # Data index to speaker and index in speaker
+                    self.reverse_idx.append((speaker, len(self.speaker_map[speaker])))
+                    
+                    # Add data to list
+                    self.data.append((
+                        os.path.join(root_dir, speaker, f),
+                        os.path.join(root_dir, speaker, f.replace('.wav', '.txt'))
+                    ))
+                    
+                    self.total += 1
+                    
+        # Load data into memory
         if self.load_in_memory:
-            self.data = [torchaudio.load(f) for f in self.file_list]
+            self.data = [(torchaudio.load(f), open(txt, 'r').read().strip()) for f, txt in self.data]
+            
+            
+        # Load in the TTS model
+        model_name = 'tts_models/en/ljspeech/speedy-speech'
+        self.tts_sr = 22050
+        self.tts = TTS(model_name, gpu=False)
+        
+        
+        # Transcribe the text using TTS
+        if self.load_in_memory:
+            self.data = [(waveform, text, self.tts.tts(text)) for waveform, text in self.data]
+        
 
     def __len__(self):
-        return len(self.file_list)
-
-    def __getitem__(self, idx):
+        return self.total
+    
+    
+    def load_item(self, idx, only_wav=False):
+        # Get the speaker and index in speaker
+        speaker, idx = self.reverse_idx[idx]
+        
+        # Get the data entry
+        data = self.data[idx]
+        
         # Get the waveform and sample rate from memory
         if self.load_in_memory:
-            waveform, sample_rate = self.data[idx]
+            waveform, sample_rate = data[0]
+            
+            if only_wav:
+                return waveform
+            
+            text = data[1]
+            waveform_unstylized, sample_rate_unstylized = (data[2], self.tts_sr)
         else:
-            waveform, sample_rate = torchaudio.load(self.file_list[idx])
+            waveform, sample_rate = torchaudio.load(data[0])
+            
+            if only_wav:
+                return waveform
+            
+            text = open(data[1], 'r', encoding="utf-8").read().strip()
+            
+            # Only get alpha numeric characters
+            text = ''.join([c for c in text if c.isalnum() or c == ' ']) + '.'
+            
+
+            # Turn off print dubugging
+            old_stdout = sys.stdout
+            sys.stdout = open(os.devnull, "w")
+            
+            waveform_unstylized, sample_rate_unstylized = (torch.tensor(self.tts.tts(text)).float().unsqueeze(0), self.tts_sr)
+            
+            # Turn back on printing
+            sys.stdout = old_stdout
         
         # Resample audio to 16000 Hz
         if sample_rate != 16000:
-            waveform = torchaudio.transforms.Resample(sample_rate, 16000)
+            waveform = torchaudio.transforms.Resample(sample_rate, 16000)(waveform)
+        waveform_unstylized = torchaudio.transforms.Resample(sample_rate_unstylized, 16000)(waveform_unstylized)
+        
+        return waveform, waveform_unstylized, text
+    
+
+    def __getitem__(self, idx):
+        # Load in the data
+        waveform, waveform_unstylized, text = self.load_item(idx)
+        
+        # Get the speaker and index in speaker
+        speaker, _ = self.reverse_idx[idx]
+        
+        # Get another random data entry from the same speaker, but
+        # with a different index value.
+        indices = self.speaker_map[speaker].copy()
+        indices.remove(idx)
+        conditional_waveform = None
+        if len(indices) > 0:
+            # Random number of indices between 1 and 3
+            number_of_indices = random.randint(1, min(3, len(indices)))
+            
+            # Get the conditional audio
+            for i in range(number_of_indices):
+                # Get the new index and return it so it can't be used again
+                idx2 = random.choice(indices)
+                indices.remove(idx2)
+                
+                # Load in the waveform
+                waveform2 = self.load_item(idx2, only_wav=True)
+                
+                # Concatenate the new waveform to the current
+                # conditional waveform
+                if conditional_waveform is None:
+                    conditional_waveform = waveform2
+                else:
+                    conditional_waveform = torch.cat((conditional_waveform, waveform2), dim=1)
+        else:
+            waveform2 = None
+        
         
         # # Breakup the audio into overlapping segments of 1 second
         # # Overlap by 0.25 seconds
@@ -37,7 +157,7 @@ class WavDataset(Dataset):
         #     # Pad waveform to 16000
         #     waveform = torch.nn.functional.pad(waveform, (0, 16000 - waveform.shape[1])).unsqueeze(0)
         
-        return waveform
+        return waveform, waveform_unstylized, text, conditional_waveform
 
 
 
@@ -45,8 +165,8 @@ class WavDataset(Dataset):
 
 
 def train():
-    data_path = "audio_dataset/data"
-    batch_size = 2
+    data_path = "audio_stylized_"
+    batch_size = 4
     num_workers = 0
     
     

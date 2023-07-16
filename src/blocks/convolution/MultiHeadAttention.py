@@ -30,7 +30,7 @@ class MultiHeadAttention(nn.Module):
         return x.reshape(x.shape[0], self.embed_dim, -1)
         
         
-    def forward(self, q, k, v):
+    def forward(self, q, k, v, transpose_scores=False):
         # Project the queries, keys and values
         q, k, v = self.q_proj(q), self.k_proj(k), self.v_proj(v)
         
@@ -41,10 +41,10 @@ class MultiHeadAttention(nn.Module):
         scores = ((k.permute(0, 1, 3, 2)@q) / (self.embed_dim ** 0.5)).softmax(dim=-1)
         
         # Compute the output
-        try:
-            out = v@scores
-        except RuntimeError:
+        if transpose_scores:
             out = v@scores.transpose(-1, -2)
+        else:
+            out = v@scores
         
         # Compute the output and remove the heads
         out = self._combine_heads(out)

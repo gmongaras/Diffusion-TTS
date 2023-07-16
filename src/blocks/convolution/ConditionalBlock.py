@@ -36,5 +36,5 @@ class ConditionalBlock(nn.Module):
         
         # Second MHA, cross where the keys are the conditional information,
         # the queries are the input and the values are the output of the resnet block
-        return self.layer_norm2(self.attn2(y, res, x) + res)
+        return self.layer_norm2(self.attn2(y, res, x, transpose_scores=True) + res)
         

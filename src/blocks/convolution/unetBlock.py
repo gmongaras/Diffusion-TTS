@@ -47,7 +47,7 @@ class unetBlock(nn.Module):
         curCh1 = outCh
         for blk in blk_types:
             if blk == "res":
-                blocks.append(ResnetBlock(curCh, curCh1, cond_dim, t_dim, dropoutRate))
+                blocks.append(ResnetBlock(curCh, curCh1, t_dim, dropoutRate))
             if blk == "cond":
                 blocks.append(ConditionalBlock(cond_dim, curCh))
             elif blk == "conv":
@@ -79,7 +79,7 @@ class unetBlock(nn.Module):
 
         for b in self.block:
             if type(b) == convNext or type(b) == ResnetBlock:
-                X = b(X, None, None)
+                X = b(X, t)
             elif type(b) == ConditionalBlock or type(b) == ConditionalBlock2 or type(b) == clsAttn or type(b) == clsAttn_Linear or type(b) == Efficient_Cls_Attention:
                 X = b(X, y)
             else:

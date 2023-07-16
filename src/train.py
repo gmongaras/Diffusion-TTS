@@ -173,7 +173,7 @@ def train():
     batch_size = 18
     num_workers = 8
     prefetch_factor = 3
-    limit = 50
+    limit = 25
     
     
     

@@ -64,7 +64,7 @@ class Block(nn.Module):
         self.norm = nn.GroupNorm(groups, dim_out)
         self.act = nn.SiLU()
 
-    def forward(self, x, t=None, c=None):
+    def forward(self, x, t_mul=None, t_add=None):
         # Project and normalize the embeddings
         x = self.proj(x)
         x = self.norm(x)
@@ -75,10 +75,10 @@ class Block(nn.Module):
         # diffusion models beat gans on image synthesis paper
         # and is called Adaptive Group Normalization
         # https://arxiv.org/abs/2105.05233
-        if exists(t):
-            x = x * t
-        if exists(c):
-            x = x + c
+        if exists(t_mul):
+            x = x * t_mul
+        if exists(t_add):
+            x = x + t_add
 
         # Apply the SiLU layer to the embeddings
         x = self.act(x)
@@ -99,17 +99,17 @@ class ResnetBlock(nn.Module):
     is projected using a linear layer and SiLU layer
     before entering the residual block
     """
-    def __init__(self, inCh, outCh, cond_dim=None, t_dim=None, dropoutRate=0.0):
+    def __init__(self, inCh, outCh, t_dim=None, dropoutRate=0.0):
         # Projections with time and class info
         super().__init__()
-        self.t_mlp = (
+        self.t_mlp_mul = (
             nn.Sequential(nn.SiLU(), nn.Linear(t_dim, outCh))
             if exists(t_dim)
             else None
         )
-        self.c_mlp = (
-            nn.Sequential(nn.SiLU(), nn.Linear(cond_dim, outCh))
-            if exists(cond_dim)
+        self.t_mlp_add = (
+            nn.Sequential(nn.SiLU(), nn.Linear(t_dim, outCh))
+            if exists(t_dim)
             else None
         )
 
@@ -118,17 +118,18 @@ class ResnetBlock(nn.Module):
         self.block2 = Block(outCh, outCh, groups=8 if outCh > 4 and outCh%8==0 else 1)
         self.res_conv = nn.Conv1d(inCh, outCh, 1) if inCh != outCh else nn.Identity()
 
-    def forward(self, x, t=None, c=None):
+    def forward(self, x, t=None):
         # Apply the class and time projections
-        if exists(self.t_mlp) and exists(t):
-            t = self.t_mlp(t)
-            t = rearrange(t, "b c -> b c 1")
-        if exists(self.c_mlp) and exists(c):
-            c = self.c_mlp(c)
-            c = rearrange(c, "b c -> b c 1")
+        t_mul, t_add = None, None
+        if exists(self.t_mlp_mul) and exists(t):
+            t_mul = self.t_mlp_mul(t)
+            t_mul = rearrange(t_mul, "b c -> b c 1")
+            
+            t_add = self.t_mlp_add(t)
+            t_add = rearrange(t_add, "b c -> b c 1")
 
         # Apply the convolutional blocks and
         # output projection with a residual connection
-        h = self.block1(x, t, c)
+        h = self.block1(x, t_mul, t_add)
         h = self.block2(h)
         return h + self.res_conv(x)

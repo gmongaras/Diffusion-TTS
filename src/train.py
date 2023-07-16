@@ -12,7 +12,7 @@ import random
 
 
 class WavDataset(Dataset):
-    def __init__(self, root_dir, load_in_memory=False):
+    def __init__(self, root_dir, load_in_memory=False, limit=-1):
         self.load_in_memory = load_in_memory
         
         # List of all data as a three part tuple:
@@ -32,6 +32,10 @@ class WavDataset(Dataset):
             for f in os.listdir(os.path.join(root_dir, speaker)):
                 # If the file is a wav file, add it to the dataset along with its corresponding text file
                 if f.endswith('.wav'):
+                    # Limit each speaker
+                    if limit != -1 and len(self.speaker_map.get(speaker, [])) >= limit:
+                        continue
+                    
                     if not speaker in self.speaker_map:
                         self.speaker_map[speaker] = []
                         
@@ -106,10 +110,10 @@ class WavDataset(Dataset):
             # Turn back on printing
             sys.stdout = old_stdout
         
-        # Resample audio to 16000 Hz
-        if sample_rate != 16000:
-            waveform = torchaudio.transforms.Resample(sample_rate, 16000)(waveform)
-        waveform_unstylized = torchaudio.transforms.Resample(sample_rate_unstylized, 16000)(waveform_unstylized)
+        # Resample audio to 24000 Hz
+        if sample_rate != 24000:
+            waveform = torchaudio.transforms.Resample(sample_rate, 24000)(waveform)
+        waveform_unstylized = torchaudio.transforms.Resample(sample_rate_unstylized, 24000)(waveform_unstylized)
         
         return waveform, waveform_unstylized, text
     
@@ -165,23 +169,27 @@ class WavDataset(Dataset):
 
 
 def train():
-    data_path = "audio_stylized_"
-    batch_size = 4
-    num_workers = 0
+    data_path = "audio_stylized_speaker"
+    batch_size = 18
+    num_workers = 8
+    prefetch_factor = 3
+    limit = 50
     
     
     
     
     
      # Create the WAVDataset
-    dataset = WavDataset(data_path)
+    dataset = WavDataset(data_path, load_in_memory=False, limit=limit)
     
     # Create the DataLoader
-    dataloader = DataLoader(dataset, 
-                            batch_size=batch_size, 
-                            shuffle=True, 
-                            num_workers=num_workers, 
-                            collate_fn=lambda x: x
+    dataloader = DataLoader(dataset,
+                            batch_size=batch_size,
+                            shuffle=True,  
+                            collate_fn=lambda x: x,
+                            num_workers=num_workers,
+                            prefetch_factor=prefetch_factor,
+                            persistent_workers=True
     )
     
     

@@ -5,6 +5,7 @@ from .clsAttn import clsAttn, clsAttn_Linear, Efficient_Cls_Attention
 from .wideResNet import ResnetBlock
 from .Multihead_Attn import Multihead_Attn
 from .ConditionalBlock import ConditionalBlock
+from .ConditionalBlock2 import ConditionalBlock2
 
 
 
@@ -79,7 +80,7 @@ class unetBlock(nn.Module):
         for b in self.block:
             if type(b) == convNext or type(b) == ResnetBlock:
                 X = b(X, None, None)
-            elif type(b) == ConditionalBlock or type(b) == clsAttn or type(b) == clsAttn_Linear or type(b) == Efficient_Cls_Attention:
+            elif type(b) == ConditionalBlock or type(b) == ConditionalBlock2 or type(b) == clsAttn or type(b) == clsAttn_Linear or type(b) == Efficient_Cls_Attention:
                 X = b(X, y)
             else:
                 X = b(X)

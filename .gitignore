@@ -1,6 +1,9 @@
 Small_Dataset/
 audio_dataset/
 audio/
+audio_stylized*
+checkpoints/
+audio_samples/
 
 
 # Byte-compiled / optimized / DLL files

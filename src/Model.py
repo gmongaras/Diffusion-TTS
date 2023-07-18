@@ -15,12 +15,13 @@ from src.utils.Diffusion_Utils import Diffusion_Utils
 
 
 class Model():
-    def __init__(self, ):
+    def __init__(self, device=torch.device("cpu")):
+        self.device = device
         
         
         ### Encodec
         # load the model + processor (for pre-processing the audio)
-        self.encodec_model = EncodecModel.from_pretrained("facebook/encodec_24khz").eval().cuda()
+        self.encodec_model = EncodecModel.from_pretrained("facebook/encodec_24khz").eval().to(self.device)
         self.processor = AutoProcessor.from_pretrained("facebook/encodec_24khz")
         # Get the quantizer from the model
         self.quantizer = self.encodec_model.quantizer
@@ -33,11 +34,13 @@ class Model():
         
         
         # Model to train
-        # self.model = Transformer(128, 128, 512, 8).cuda()
-        self.model = U_Net(128, 128, 128, 1, num_blocks=3, blk_types=["res", "cond", "res"], cond_dim=128, t_dim=128).cuda()
+        # self.model = Transformer(128, 128, 512, 8).to(self.device)
+        embed_dim = 304
+        t_embed_dim = 128
+        self.model = U_Net(128, 128, embed_dim, 1, num_blocks=2, blk_types=["res", "cond", "res"], cond_dim=128, t_dim=t_embed_dim).to(self.device)
         
         # Diffusion model utility class
-        self.diffusion_utils = Diffusion_Utils(128)
+        self.diffusion_utils = Diffusion_Utils(t_embed_dim)
         
         # Paramater counts
         print("U-Net model has {} parameters".format(sum(p.numel() for p in self.model.parameters() if p.requires_grad)))
@@ -52,7 +55,7 @@ class Model():
         
         
         # Encode inputs
-        encoded_outputs = self.encodec_model.encode(audio_segment["input_values"].cuda(), audio_segment["padding_mask"].cuda(), bandwidth=24.0)
+        encoded_outputs = self.encodec_model.encode(audio_segment["input_values"].to(self.device), audio_segment["padding_mask"].to(self.device), bandwidth=24.0)
         encoded_outputs = encoded_outputs.audio_codes
         
         
@@ -61,7 +64,7 @@ class Model():
         encoded_outputs = self.quantizer.decode(encoded_outputs.squeeze(0).transpose(0, 1))
         
         # Transpose the inputs to (B, T, E)
-        encoded_outputs = encoded_outputs.transpose(1, 2).float().cuda()
+        encoded_outputs = encoded_outputs.transpose(1, 2).float().to(self.device)
         
         return encoded_outputs
         
@@ -123,7 +126,7 @@ class Model():
                     stylized_audio = [x[0] for x in batch]
                     unstylized_audio = [x[1] for x in batch]
                     text = [x[2] for x in batch]
-                    conditional_audio = [x[3] if type(x[3]) is not type(None) else torch.zeros(1, 16000) for x in batch]
+                    conditional_audio = [x[3] if type(x[3]) is not type(None) else torch.zeros(1, 24000) for x in batch]
                     
                     # Max lengths for each type of audio
                     stylized_max_length = max([x.shape[1] for x in stylized_audio])
@@ -153,9 +156,9 @@ class Model():
                     
                     
                     # Permute audio to be of shape (N, E, T)
-                    stylized = stylized.permute(0, 2, 1).clone().cuda()
-                    unstylized = unstylized.permute(0, 2, 1).clone().cuda()
-                    conditional = conditional.permute(0, 2, 1).clone().cuda()
+                    stylized = stylized.permute(0, 2, 1).clone().to(self.device)
+                    unstylized = unstylized.permute(0, 2, 1).clone().to(self.device)
+                    conditional = conditional.permute(0, 2, 1).clone().to(self.device)
                     
                     
                 ## Using the diffusion model utilities, interpolate the audio
@@ -163,8 +166,8 @@ class Model():
                 ## Note that instead of predicting the noise as our prior, we 
                 ## predict the unstylized audio as our prior. Basically, the
                 ## unstlyized audio is the "noise" the we want to remove.
-                timesteps = self.diffusion_utils.sample_t(stylized.shape[0]).cuda()
-                positional_embeddings = self.diffusion_utils.t_to_positional_embeddings(timesteps.squeeze(1, -1)).cuda()
+                timesteps = self.diffusion_utils.sample_t(stylized.shape[0]).to(self.device)
+                positional_embeddings = self.diffusion_utils.t_to_positional_embeddings(timesteps.squeeze(1, -1)).to(self.device)
                 audio_super = self.diffusion_utils.diffuse_data(timesteps, stylized, unstylized)
                     
                     
@@ -197,7 +200,7 @@ class Model():
             # Save audio samples
             torchaudio.save(f"audio_samples/epoch_{epoch}/stylized.wav", stylized_audio[0].cpu(), 24000)
             torchaudio.save(f"audio_samples/epoch_{epoch}/unstylized.wav", unstylized_audio[0].cpu(), 24000)
-            torchaudio.save(f"audio_samples/epoch_{epoch}/unstylized_recon.wav", self.encodec_model.decoder(stylized_audio_pred.cuda())[0].cpu(), 24000)
+            torchaudio.save(f"audio_samples/epoch_{epoch}/unstylized_recon.wav", self.encodec_model.decoder(stylized_audio_pred.to(self.device))[0].cpu(), 24000)
             
             # Save model checkpoints
             if not os.path.exists("checkpoints/epoch_{}".format(epoch)):
@@ -208,3 +211,56 @@ class Model():
             if not os.path.exists("checkpoints/epoch_{}".format(epoch)):
                 os.makedirs("checkpoints/epoch_{}".format(epoch))
             torch.save(optimizer.state_dict(), f"checkpoints/epoch_{epoch}/optimizer.pth")
+            
+            
+            
+            
+    
+    # Given text and a list of conditionals, generate the stylized audio
+    def infer(self, text, conditionals=[], num_steps=100):
+        # Create the unstylized audio
+        try:
+            unstylized = torch.tensor(self.tts.tts(text)).float()
+        except RuntimeError:
+            unstylized = torch.tensor(self.tts.tts(text + "...")).float()
+        
+        # Load in the conditional audio
+        conditionals = [torchaudio.load(path) for path in conditionals]
+        conditionals = [torchaudio.transforms.Resample(c[1], 24000)(c[0]) for c in conditionals]
+        
+        # Pass the data through the encodec
+        unstylized = self.process_data(unstylized.unsqueeze(0))
+        conditionals = [self.process_data(c) for c in conditionals]
+        
+        # Pad the unstylized audio to the nearest second
+        # Note: 75 is a second in the latent dimension
+        unstylized = torch.nn.functional.pad(unstylized, (0, 0, 0, 75 - unstylized.shape[1]%75))
+        
+        # Concatenate the conditional audio along the time dimension
+        conditionals = torch.cat(conditionals, dim=1)
+        
+        # Permute audio to be of shape (N, E, T)
+        unstylized = unstylized.permute(0, 2, 1).to(self.device)
+        conditionals = conditionals.permute(0, 2, 1).to(self.device)
+        
+        # Get prediction
+        pred = self.diffusion_utils.sample_data(self.model, unstylized, num_steps=num_steps, cond=conditionals)
+        
+        # Decode the audio
+        return self.encodec_model.decoder(pred.to(self.device))[0].cpu()
+    
+    
+    
+    
+    
+    # Used to load in checkpoints
+    def load_checkpoint(self, path):
+        # Load in the model
+        self.model.load_state_dict(torch.load(path + "/model.pth", map_location=self.device))
+        self.model.eval()
+        
+        # Load in the optimizer
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-4)
+        optimizer.load_state_dict(torch.load(path + "/optimizer.pth", map_location=self.device))
+        
+        return optimizer

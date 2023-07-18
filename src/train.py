@@ -173,7 +173,8 @@ def train():
     batch_size = 18
     num_workers = 8
     prefetch_factor = 3
-    limit = 25
+    limit = 50
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     
     
     
@@ -196,7 +197,7 @@ def train():
     
     
     # Create the main model
-    model = Model()
+    model = Model(device)
     
     
     

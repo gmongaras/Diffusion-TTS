@@ -23,7 +23,11 @@ class ConditionalBlock(nn.Module):
         self.layer_norm2 = nn.GroupNorm(1, embed_dim)
         
         
-    def forward(self, x, y):
+    def forward(self, x, y=None):
+        # Identity if no conditional information
+        if type(y) == type(None):
+            return x
+        
         # Residual connection
         res = x.clone()
         

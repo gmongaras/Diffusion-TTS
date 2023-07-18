@@ -48,13 +48,16 @@ class Diffusion_Utils:
     
     # Given data at timestep t and the predicted origin/prior, x_1,
     # take a DDIM step to get the next timestep
-    def take_ddim_step(self, x_t, x_1_pred, t_now, t_next):
+    def take_ddim_step(self, x_t, x_1_pred, t_now, t_next, clamp=False):
         # Compute the gamma values for the timesteps
         gammas = linear_scheduler(t_now).reshape(-1, 1, 1)
         gammas_next = linear_scheduler(t_next).reshape(-1, 1, 1)
         
         # DDIM without noise component
-        return torch.sqrt(gammas_next)*((x_t - torch.sqrt(1-gammas)*x_1_pred)/torch.sqrt(gammas)).clamp(-1, 1) + \
+        if clamp:
+            return torch.sqrt(gammas_next)*((x_t - torch.sqrt(1-gammas)*x_1_pred)/torch.sqrt(gammas)).clamp(-25, 25) + \
+                torch.sqrt(1-gammas_next)*x_1_pred
+        return torch.sqrt(gammas_next)*((x_t - torch.sqrt(1-gammas)*x_1_pred)/torch.sqrt(gammas)) + \
             torch.sqrt(1-gammas_next)*x_1_pred
     
     
@@ -64,7 +67,7 @@ class Diffusion_Utils:
     def sample_data(self, model, x_1, num_steps=100, cond=None):
         # Iterate over all steps
         x_t = x_1
-        for step in tqdm(range(num_steps)):
+        for step in tqdm(range(0, num_steps)):
             # Convert timestep between 0 and 1
             # and start at 1 instead of 0. Then
             # get the next timestep.
@@ -76,7 +79,7 @@ class Diffusion_Utils:
             positional_encodings = self.t_to_positional_embeddings(t.squeeze(1, -1))
             x_1_pred = model(x_t, cond, positional_encodings)
             
-            # Take DDPM step on the predicted x_1 prior using DDIM
-            x_t = self.take_ddim_step(x_t, x_1_pred, t, t_next)
+            # Take DDIM step on the predicted x_1 prior
+            x_t = self.take_ddim_step(x_t, x_1_pred, t, t_next, step==0)
         
         return x_t

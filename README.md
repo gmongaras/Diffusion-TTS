@@ -2,6 +2,27 @@
 RoVoLaD - Robot voice to stylized voice latent diffusion model
 
 
+# Tests and Ablations
+1. Does the model work as claimed?
+    - Train a model on a Gaussian prior and another on the proposed robot prior. Test the following:
+        1. Accuracy/fidelity
+        2. Training/convergence speed
+        3. # of diffusion steps to generate data
+    - Also train on both? Perhaps this could increase varity.
+2. Is a CNN or transformer better?
+    - Test both a transformer in the (T, E) domain and (E, T) domain.
+3. Test padding:
+    - Post padding after the sequence
+    - Pre padding before the sequence
+    - Padding before and after the sequence, evenly
+4. Test conditioning:
+    - Train on only conditioning (current method) so that the model has context of the desired style
+    - Train on both conditioning and no conditioning (with like 10% probability).
+        - This method allows for classifier free guidance.
+        - Perhaps training with a set of data without conditioning (one off data from GigaSpeech) along
+          with conditioning data results in better results and more variety?
+
+
 # To-do
 1. [ ] Collect dataset for AE training
     1. We need a stylized audio dataset.

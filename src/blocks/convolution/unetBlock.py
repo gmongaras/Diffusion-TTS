@@ -50,15 +50,6 @@ class unetBlock(nn.Module):
                 blocks.append(ResnetBlock(curCh, curCh1, t_dim, dropoutRate))
             if blk == "cond":
                 blocks.append(ConditionalBlock(cond_dim, curCh))
-            elif blk == "conv":
-                blocks.append(convNext(curCh, curCh1, t_dim, c_dim, dropoutRate))
-            elif blk == "clsAtn":
-                blocks.append(clsAttn(c_dim, curCh))
-            elif blk == "chnAtn":
-                blocks.append(Efficient_Channel_Attention(curCh))
-            elif blk == "atn":
-                assert atn_resolution != None, "Resolution cannot be none when using attention"
-                blocks.append(Multihead_Attn(curCh, resolution=atn_resolution, spatial=True))
 
             curCh = curCh1
 
@@ -69,18 +60,19 @@ class unetBlock(nn.Module):
     #   X - Tensor of shape (N, inCh, T)
     #   y - (optional) Tensor of shape (N, cond_dim, T)
     #   t - (optional) Tensor of shape (N, t_dim)
+    #   mask - (optional) Tensor of shape (N, 1, T)
     # Output:
     #   Tensor of shape (N, outCh, L, W)
-    def forward(self, X, y=None, t=None):
+    def forward(self, X, y=None, t=None, mask=None):
         # Class assertion
         if y != None:
             assert self.useCls == True, \
                 "cond_dim cannot be None if using conditional information"
 
         for b in self.block:
-            if type(b) == convNext or type(b) == ResnetBlock:
-                X = b(X, t)
-            elif type(b) == ConditionalBlock or type(b) == ConditionalBlock2 or type(b) == clsAttn or type(b) == clsAttn_Linear or type(b) == Efficient_Cls_Attention:
+            if type(b) == ResnetBlock:
+                X = b(X, t, mask)
+            elif type(b) == ConditionalBlock or type(b) == ConditionalBlock2:
                 X = b(X, y)
             else:
                 X = b(X)

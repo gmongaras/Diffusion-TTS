@@ -38,6 +38,7 @@ class Diffusion_Utils:
     # t - betach of floating point value between 0 and 1 of shape (N)
     # x_0 - batch of data at timestep 0 (posterior) of shape (N, C, T)
     # x_1 - batch of data at timestep 1 (prior) of shape (N, C, T)
+    # NOTE: The forward noising equation is x_t = sqrt(gammas)*x_0 + sqrt(1-gammas)*x_1
     def diffuse_data(self, t, x_0, x_1):
         # Compute the gamma values for each timestep
         gammas = linear_scheduler(t).reshape(-1, 1, 1)
@@ -59,6 +60,29 @@ class Diffusion_Utils:
                 torch.sqrt(1-gammas_next)*x_1_pred
         return torch.sqrt(gammas_next)*((x_t - torch.sqrt(1-gammas)*x_1_pred)/torch.sqrt(gammas)) + \
             torch.sqrt(1-gammas_next)*x_1_pred
+            
+            
+    def take_cold_diffusion_step(self, x_t, x_1_pred, t_now, t_next):
+        # Compute the gamma values for the timesteps
+        gammas = linear_scheduler(t_now).reshape(-1, 1, 1)
+        gammas_next = linear_scheduler(t_next).reshape(-1, 1, 1)
+        
+        # Get the prediction for x_0 (posterior) and x_1 (prior)
+        x_0_hat = x_1_pred
+        x_1_hat = (x_t-torch.sqrt(gammas)*x_0_hat)/torch.sqrt(1-gammas) # Obtained by solving the forward noising equation for x_1
+        
+        # Predicted x_t
+        xt_bar = self.diffuse_data(t_now, x_0_hat, x_1_hat)
+        #xt_bar = gammas*x1_bar + (1-gammas)*x2_bar
+        
+        # Predicted x_t-1
+        xt_sub1_bar = self.diffuse_data(t_next, x_0_hat, x_1_hat)
+        #xt_sub1_bar = gammas_next*x1_bar + (1-gammas_next)*x2_bar
+        
+        # Get corrected prediction for x_t-1
+        # NOTE: x_t - xt_bar predicts x_0
+        #       and xt_sub1_bar predicts x_t-1 from the predicted x_0 
+        return x_t - xt_bar + xt_sub1_bar
     
     
     # Given a batch of data at timestep 1 (prior), diffuse
@@ -80,6 +104,9 @@ class Diffusion_Utils:
             x_1_pred = model(x_t, cond, positional_encodings)
             
             # Take DDIM step on the predicted x_1 prior
-            x_t = self.take_ddim_step(x_t, x_1_pred, t, t_next, step==0)
+            # x_t = self.take_ddim_step(x_t, x_1_pred, t, t_next, step==0)
+            
+            # Take Cold Diffusion step on the predicted x_1 prior
+            x_t = self.take_cold_diffusion_step(x_t, x_1_pred, t, t_next)
         
         return x_t

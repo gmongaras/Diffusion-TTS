@@ -15,8 +15,11 @@ from src.utils.Diffusion_Utils import Diffusion_Utils
 
 
 class Model():
-    def __init__(self, device=torch.device("cpu")):
+    def __init__(self, device=torch.device("cpu"), use_noise=False):
         self.device = device
+        self.use_noise = use_noise
+        self.sampling_rate = 24_000
+        self.scale = 10
         
         
         ### Encodec
@@ -35,7 +38,7 @@ class Model():
         
         # Model to train
         # self.model = Transformer(128, 128, 512, 8).to(self.device)
-        embed_dim = 304
+        embed_dim = 152
         t_embed_dim = 128
         self.model = U_Net(128, 128, embed_dim, 1, num_blocks=2, blk_types=["res", "cond", "res"], cond_dim=128, t_dim=t_embed_dim).to(self.device)
         
@@ -49,12 +52,18 @@ class Model():
         
         
         
-    def process_data(self, audio_segment):
+    def process_data(self, audio_segment, masks=None):
         # Preporcess the audio segments
         audio_segment = self.processor(audio_segment.squeeze(1).tolist(), sampling_rate=24000, return_tensors="pt")
         
+        # Change the masks
+        if masks is not None:
+            for i, m in enumerate(masks):
+                audio_segment["padding_mask"][i][m:] = 0
         
         # Encode inputs
+        # NOTE: Encodec is stupid and expects the masks to be 0 where we want to
+        # keep the audio and 1 where we want to mask it out
         encoded_outputs = self.encodec_model.encode(audio_segment["input_values"].to(self.device), audio_segment["padding_mask"].to(self.device), bandwidth=24.0)
         encoded_outputs = encoded_outputs.audio_codes
         
@@ -63,10 +72,24 @@ class Model():
         # Note the quantizer expects inputs to be of shape (CB, B, T)
         encoded_outputs = self.quantizer.decode(encoded_outputs.squeeze(0).transpose(0, 1))
         
-        # Transpose the inputs to (B, T, E)
-        encoded_outputs = encoded_outputs.transpose(1, 2).float().to(self.device)
+        # Transpose the inputs to (B, E, T)
+        encoded_outputs = encoded_outputs.float().to(self.device)
         
-        return encoded_outputs
+        # Change the masks to be in the context of the
+        # latent dimension and make it a full matrix.
+        # This matrix will be zero where we mask
+        # and 1 where we keep
+        if masks is not None:
+            masks_full = torch.ones(encoded_outputs.shape[0], 1, encoded_outputs.shape[2], dtype=torch.bool, device=self.device)
+            for i, m in enumerate(masks):
+                # New mask is basically quantized from 24_000 -> 75
+                new_mask = m//(self.sampling_rate//self.quantizer.frame_rate)
+                masks_full[i][:, new_mask:] = 0
+                
+        # Return masked outputs
+        if masks is None:
+            return encoded_outputs, None
+        return encoded_outputs*masks_full, masks_full
         
         
         
@@ -75,7 +98,7 @@ class Model():
     
     def train(self, dataloader):
         # Optimzer
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=10e-4)
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-3)
         
         # Loss function
         loss_fn = torch.nn.MSELoss()
@@ -115,60 +138,91 @@ class Model():
         
         
         
-        for epoch in range(0, 10000):
+        for epoch in range(4, 10000):
             # Total batch loss
             batch_loss = 0
             
             # Iterate over the batches of data
-            for batch in tqdm(dataloader):
+            for batch_num, batch in enumerate(tqdm(dataloader)):
                 with torch.no_grad():
                     # Get a batch of data
                     stylized_audio = [x[0] for x in batch]
-                    unstylized_audio = [x[1] for x in batch]
+                    if not self.use_noise:
+                        unstylized_audio = [x[1] for x in batch]
                     text = [x[2] for x in batch]
                     conditional_audio = [x[3] if type(x[3]) is not type(None) else torch.zeros(1, 24000) for x in batch]
                     
                     # Max lengths for each type of audio
                     stylized_max_length = max([x.shape[1] for x in stylized_audio])
-                    unstylized_max_length = max([x.shape[1] for x in unstylized_audio])
+                    if not self.use_noise:
+                        unstylized_max_length = max([x.shape[1] for x in unstylized_audio])
                     conditional_max_length = max([x.shape[1] for x in conditional_audio])
+                    
+                    # Construct masks for the max length audio
+                    masks_stylized = torch.tensor([x.shape[1] for x in stylized_audio]).int().to(self.device)
+                    if not self.use_noise:
+                        masks_unstylized = torch.tensor([x.shape[1] for x in stylized_audio]).int().to(self.device)
+                    masks_conditional = torch.tensor([x.shape[1] for x in stylized_audio]).int().to(self.device)
                     
                     # Pad all audio to max lengths
                     stylized_audio = torch.stack([torch.nn.functional.pad(a, (0, stylized_max_length - a.shape[1], 0, 0)) for a in stylized_audio])
-                    unstylized_audio = torch.stack([torch.nn.functional.pad(a, (0, unstylized_max_length - a.shape[1], 0, 0)) for a in unstylized_audio])
+                    if not self.use_noise:
+                        unstylized_audio = torch.stack([torch.nn.functional.pad(a, (0, unstylized_max_length - a.shape[1], 0, 0)) for a in unstylized_audio])
                     conditional_audio = torch.stack([torch.nn.functional.pad(a, (0, conditional_max_length - a.shape[1], 0, 0)) for a in conditional_audio])
                     
                     # Encode the audio using encodec
-                    stylized = self.process_data(stylized_audio)
-                    unstylized = self.process_data(unstylized_audio)
-                    conditional = self.process_data(unstylized_audio)
+                    stylized, masks_stylized = self.process_data(stylized_audio, masks_stylized)
+                    if not self.use_noise:
+                        unstylized, masks_unstylized = self.process_data(unstylized_audio, masks_unstylized)
+                    conditional, masks_conditional = self.process_data(conditional_audio, masks_conditional)
                     
-                    if stylized.shape[1] < unstylized.shape[1]:
-                        # Pad the stlyized audio to the same length as the unstylized audio
-                        padding_pre = (unstylized.shape[1] - stylized.shape[1])//2
-                        padding_post = (unstylized.shape[1] - stylized.shape[1]) - padding_pre
-                        stylized = torch.nn.functional.pad(stylized, (0, 0, padding_pre, padding_post))
+                    if not self.use_noise:
+                        if stylized.shape[2] < unstylized.shape[2]:
+                            # Pad the stlyized audio to the same length as the unstylized audio
+                            stylized = torch.nn.functional.pad(stylized, (0, unstylized.shape[2] - stylized.shape[2], 0, 0))
+                            masks_stylized = masks_unstylized.clone()
+                        else:
+                            # Pad the unstlyized audio to the same length as the stylized audio
+                            unstylized = torch.nn.functional.pad(unstylized, (0, stylized.shape[2] - unstylized.shape[2], 0, 0))
+                            masks_unstylized = masks_stylized.clone()
+                    
+                    
+                    # Audio is of shape (N, E, T)
+                    stylized = stylized.clone().to(self.device)
+                    if not self.use_noise:
+                        unstylized = unstylized.clone().to(self.device)
+                    conditional = conditional.clone().to(self.device)
+                    # Masks of shape (N, 1, T)
+                    masks_stylized = masks_stylized.to(self.device)
+                    if not self.use_noise:
+                        masks_unstylized = masks_unstylized.to(self.device)
+                    masks_conditional = masks_conditional.to(self.device)
+                    
+                    
+                    ## Using the diffusion model utilities, interpolate the audio
+                    ## to be some superposition of the stylized and unstylized audio
+                    ## Note that instead of predicting the noise as our prior, we 
+                    ## predict the unstylized audio as our prior. Basically, the
+                    ## unstlyized audio is the "noise" the we want to remove.
+                    timesteps = self.diffusion_utils.sample_t(stylized.shape[0]).to(self.device)
+                    positional_embeddings = self.diffusion_utils.t_to_positional_embeddings(timesteps.squeeze(1, -1)).to(self.device)
+                    
+                    # Sample the audio as a superposition of the stylized and unstylized audio
+                    # or as a uperposition of the stylized audio and noise depending on
+                    # what `self.use_noise` is
+                    if self.use_noise:
+                        unstylized = audio_super = torch.randn_like(stylized)
                     else:
-                        # Pad the unstlyized audio to the same length as the stylized audio
-                        padding_pre = (stylized.shape[1] - unstylized.shape[1])//2
-                        padding_post = (stylized.shape[1] - unstylized.shape[1]) - padding_pre
-                        unstylized = torch.nn.functional.pad(unstylized, (0, 0, padding_pre, padding_post))
+                        audio_super = self.diffusion_utils.diffuse_data(timesteps, stylized, unstylized)
                     
                     
-                    # Permute audio to be of shape (N, E, T)
-                    stylized = stylized.permute(0, 2, 1).clone().to(self.device)
-                    unstylized = unstylized.permute(0, 2, 1).clone().to(self.device)
-                    conditional = conditional.permute(0, 2, 1).clone().to(self.device)
                     
                     
-                ## Using the diffusion model utilities, interpolate the audio
-                ## to be some superposition of the stylized and unstylized audio
-                ## Note that instead of predicting the noise as our prior, we 
-                ## predict the unstylized audio as our prior. Basically, the
-                ## unstlyized audio is the "noise" the we want to remove.
-                timesteps = self.diffusion_utils.sample_t(stylized.shape[0]).to(self.device)
-                positional_embeddings = self.diffusion_utils.t_to_positional_embeddings(timesteps.squeeze(1, -1)).to(self.device)
-                audio_super = self.diffusion_utils.diffuse_data(timesteps, stylized, unstylized)
+                    # Normalize audio by dividing by a scale factor
+                    stylized = stylized / self.scale
+                    if not self.use_noise:
+                        unstylized = unstylized / self.scale
+                    audio_super = audio_super / self.scale
                     
                     
                     
@@ -176,10 +230,11 @@ class Model():
                     
                 # Forward pass to get the predicted unstylized audio
                 # from the interpolated audio
-                unstylized_pred = self.model(audio_super, conditional if conditional_audio is not None else None, positional_embeddings)
+                stylized_pred = self.model(audio_super, conditional if conditional_audio is not None else None, positional_embeddings, masks_stylized)
                 
                 # Compute loss
-                loss = loss_fn(unstylized, unstylized_pred)
+                # We want the model to predict the stylized audio
+                loss = loss_fn(stylized, stylized_pred)
                 
                 # Backward pass
                 optimizer.zero_grad()
@@ -190,27 +245,34 @@ class Model():
                 
                 batch_loss += loss.item()
                 
+                # Free memory except on last batch
+                if batch_num != len(dataloader)-1:
+                    del stylized, unstylized, conditional, masks_stylized, masks_unstylized, masks_conditional, stylized_pred, audio_super, positional_embeddings, timesteps
+                    torch.cuda.empty_cache()
+                
             print(f"Epoch: {epoch} | Batch Loss: {batch_loss/len(dataloader)}")
             
             ## Audio samples
             if not os.path.exists("audio_samples/epoch_{}".format(epoch)):
                 os.makedirs("audio_samples/epoch_{}".format(epoch))
             # Generate audio prediction by diffusing the unstylized audio to the predicted stylized audio
-            stylized_audio_pred = self.diffusion_utils.sample_data(self.model, unstylized[:1], cond=conditional[:1] if conditional_audio is not None else None)
+            stylized_audio_pred = self.diffusion_utils.sample_data(self.model, unstylized[:1, :, :masks_stylized[0].sum()], cond=conditional[:1] if conditional_audio is not None else None)
+            stylized_audio_pred *= self.scale
             # Save audio samples
-            torchaudio.save(f"audio_samples/epoch_{epoch}/stylized.wav", stylized_audio[0].cpu(), 24000)
-            torchaudio.save(f"audio_samples/epoch_{epoch}/unstylized.wav", unstylized_audio[0].cpu(), 24000)
+            torchaudio.save(f"audio_samples/epoch_{epoch}/stylized.wav", stylized_audio[0].cpu() * self.scale, 24000)
+            if not self.use_noise:
+                torchaudio.save(f"audio_samples/epoch_{epoch}/unstylized.wav", unstylized_audio[0].cpu() * self.scale, 24000)
             torchaudio.save(f"audio_samples/epoch_{epoch}/unstylized_recon.wav", self.encodec_model.decoder(stylized_audio_pred.to(self.device))[0].cpu(), 24000)
             
             # Save model checkpoints
-            if not os.path.exists("checkpoints/epoch_{}".format(epoch)):
-                os.makedirs("checkpoints/epoch_{}".format(epoch))
-            torch.save(self.model.state_dict(), f"checkpoints/epoch_{epoch}/model.pth")
+            if not os.path.exists("checkpoints2/epoch_{}".format(epoch)):
+                os.makedirs("checkpoints2/epoch_{}".format(epoch))
+            torch.save(self.model.state_dict(), f"checkpoints2/epoch_{epoch}/model.pth")
             
             # Save optimizer checkpoints
-            if not os.path.exists("checkpoints/epoch_{}".format(epoch)):
-                os.makedirs("checkpoints/epoch_{}".format(epoch))
-            torch.save(optimizer.state_dict(), f"checkpoints/epoch_{epoch}/optimizer.pth")
+            if not os.path.exists("checkpoints2/epoch_{}".format(epoch)):
+                os.makedirs("checkpoints2/epoch_{}".format(epoch))
+            torch.save(optimizer.state_dict(), f"checkpoints2/epoch_{epoch}/optimizer.pth")
             
             
             
@@ -229,22 +291,24 @@ class Model():
         conditionals = [torchaudio.transforms.Resample(c[1], 24000)(c[0]) for c in conditionals]
         
         # Pass the data through the encodec
-        unstylized = self.process_data(unstylized.unsqueeze(0))
-        conditionals = [self.process_data(c) for c in conditionals]
+        unstylized, _ = self.process_data(unstylized.unsqueeze(0))
+        conditionals = [self.process_data(c)[0] for c in conditionals]
+        conditionals_0 = conditionals[0]
         
         # Pad the unstylized audio to the nearest second
         # Note: 75 is a second in the latent dimension
-        unstylized = torch.nn.functional.pad(unstylized, (0, 0, 0, 75 - unstylized.shape[1]%75))
+        unstylized = torch.nn.functional.pad(unstylized, (0, 75 - unstylized.shape[2]%75, 0, 0))
         
         # Concatenate the conditional audio along the time dimension
-        conditionals = torch.cat(conditionals, dim=1)
+        conditionals = torch.cat(conditionals, dim=2)
         
         # Permute audio to be of shape (N, E, T)
-        unstylized = unstylized.permute(0, 2, 1).to(self.device)
-        conditionals = conditionals.permute(0, 2, 1).to(self.device)
+        unstylized = unstylized.to(self.device) / self.scale
+        conditionals = conditionals.to(self.device) / self.scale
         
         # Get prediction
         pred = self.diffusion_utils.sample_data(self.model, unstylized, num_steps=num_steps, cond=conditionals)
+        pred *= self.scale
         
         # Decode the audio
         return self.encodec_model.decoder(pred.to(self.device))[0].cpu()

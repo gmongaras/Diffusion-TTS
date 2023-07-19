@@ -170,11 +170,14 @@ class WavDataset(Dataset):
 
 def train():
     data_path = "audio_stylized_speaker"
-    batch_size = 18
+    batch_size = 20
     num_workers = 8
     prefetch_factor = 3
-    limit = 50
+    limit = 10
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    use_noise = False
+    
+    checkpoint_path = "checkpoints2/epoch_3/"
     
     
     
@@ -197,7 +200,11 @@ def train():
     
     
     # Create the main model
-    model = Model(device)
+    model = Model(device, use_noise)
+    
+    # Load in the checkpoint
+    if checkpoint_path:
+        model.load_checkpoint(checkpoint_path)
     
     
     

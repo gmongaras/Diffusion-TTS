@@ -23,7 +23,7 @@ class ConditionalBlock(nn.Module):
         self.layer_norm2 = nn.GroupNorm(1, embed_dim)
         
         
-    def forward(self, x, y=None):
+    def forward(self, x, y=None, mask=None):
         # Identity if no conditional information
         if type(y) == type(None):
             return x
@@ -36,7 +36,7 @@ class ConditionalBlock(nn.Module):
         x = self.layer_norm1(self.attn1(y, x, x))
         
         # Resnet block to extract features from the input
-        x = self.resBlock(x)
+        x = self.resBlock(x, mask=mask)
         
         # Second MHA, cross where the keys are the conditional information,
         # the queries are the input and the values are the output of the resnet block

@@ -9,10 +9,12 @@ try:
     from src.blocks.convolution.unetBlock import unetBlock
     from src.blocks.convolution.Efficient_Channel_Attention import Efficient_Channel_Attention
     from src.blocks.convolution.Multihead_Attn import Multihead_Attn
+    from src.blocks.convolution.wideResNet import WeightStandardizedConv1d
 except ModuleNotFoundError:
     from ..blocks.convolution.unetBlock import unetBlock
     from ..blocks.convolution.Efficient_Channel_Attention import Efficient_Channel_Attention
     from ..blocks.convolution.Multihead_Attn import Multihead_Attn
+    from ..blocks.convolution.wideResNet import WeightStandardizedConv1d
 
 
 
@@ -41,7 +43,7 @@ class U_Net(nn.Module):
         self.cond_dim = cond_dim
 
         # Input convolution
-        self.inConv = nn.Conv1d(inCh, embCh, 7, padding=3)
+        self.inConv = WeightStandardizedConv1d(inCh, embCh, 7, padding=3)
         
         # Downsampling
         # (N, inCh, L, W) -> (N, embCh^(chMult*num_blocks), L/(2^num_blocks), W/(2^num_blocks))
@@ -50,7 +52,7 @@ class U_Net(nn.Module):
         for i in range(1, num_blocks+1):
             blocks.append(unetBlock(curCh, embCh*(2**(chMult*i)), blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
             if i != num_blocks+1:
-                blocks.append(nn.Conv1d(embCh*(2**(chMult*i)), embCh*(2**(chMult*i)), kernel_size=3, stride=2, padding=1))
+                blocks.append(WeightStandardizedConv1d(embCh*(2**(chMult*i)), embCh*(2**(chMult*i)), kernel_size=3, stride=2, padding=1))
             curCh = embCh*(2**(chMult*i))
         self.downBlocks = nn.Sequential(
             *blocks
@@ -85,7 +87,7 @@ class U_Net(nn.Module):
         )
         
         # Final output block
-        self.out = nn.Conv1d(outCh, outCh, 7, padding=3)
+        self.out = WeightStandardizedConv1d(outCh, outCh, 7, padding=3)
 
         # Down/up sample blocks
         self.downSamp = nn.AvgPool1d(2) 
@@ -101,12 +103,14 @@ class U_Net(nn.Module):
     
     
     # Input:
-    #   X - Tensor of shape (N, T, E)
+    #   X - Tensor of shape (N, E, T)
     #   c - (optional) Batch of encoded conditonal information
-    #       of shape (N, T2, E)
+    #       of shape (N, E, T2)
     #   t - (optional) Batch of encoded t values for each 
     #       X value of shape (N, t_dim)
-    def forward(self, X, y=None, t=None):
+    #   masks - (optional) Batch of masks for each X value
+    #       of shape (N, 1, T)
+    def forward(self, X, y=None, t=None, masks=None):
         # conditional information assertion
         if type(y) != type(None):
             assert type(self.cond_dim) != type(None), "cond_dim must be specified when using condtional information."
@@ -117,19 +121,30 @@ class U_Net(nn.Module):
 
         # Saved residuals to add to the upsampling
         residuals = []
+        residual_masks = []
 
-        X = self.inConv(X)
+        X = self.inConv(X, masks)
         
         # Send the input through the downsampling blocks
         # while saving the output of each one
         # for residual connections
         b = 0
         while b < len(self.downBlocks):
-            X = self.downBlocks[b](X, y, t)
+            # Convoltuion blocks
+            X = self.downBlocks[b](X, y, t, masks)
+            
+            # Save residual from convolutions
             residuals.append(X.clone())
+            
+            # Final block is a downsampling block
             b += 1
-            if b < len(self.downBlocks) and type(self.downBlocks[b]) == nn.Conv1d:
-                X = self.downBlocks[b](X)
+            if b < len(self.downBlocks) and type(self.downBlocks[b]) == WeightStandardizedConv1d:
+                # Reduce mask size and save old masks for later
+                residual_masks.append(masks.clone() if type(masks) == torch.Tensor else None)
+                masks = masks[:, :, ::2] if type(masks) == torch.Tensor else None
+                
+                # Downsample the input
+                X = self.downBlocks[b](X, masks)
                 b += 1
             
         # Reverse the residuals
@@ -139,7 +154,7 @@ class U_Net(nn.Module):
         # through the intermediate blocks
         for b in self.intermediate:
             try:
-                X = b(X, y, t)
+                X = b(X, y, t, masks)
             except TypeError:
                 X = b(X)
         
@@ -147,16 +162,25 @@ class U_Net(nn.Module):
         # block to get the original shape
         b = 0
         while b < len(self.upBlocks):
+            # Upsample the input and get he masks
             if b < len(self.upBlocks) and type(self.upBlocks[b]) == nn.ConvTranspose1d:
+                # Upsample
                 X = self.upBlocks[b](X)
                 b += 1
+                
+                # Get masks for this layer
+                masks = residual_masks.pop()
+                
+            # Other residual blocks
             if len(residuals) > 0:
-                X = self.upBlocks[b](torch.cat((X[:, :, :residuals[0].shape[-1]], residuals[0]), dim=1), y, t)
+                X = self.upBlocks[b](torch.cat((X[:, :, :residuals[0].shape[-1]], residuals[0]), dim=1), y, t, masks)
+                
+            # Final residual block
             else:
-                X = self.upBlocks[b](X, y, t)
+                X = self.upBlocks[b](X, y, t, masks)
             b += 1
             residuals = residuals[1:]
         
         # Send the output through the final block
         # and return the output
-        return self.out(X)
+        return self.out(X, masks)

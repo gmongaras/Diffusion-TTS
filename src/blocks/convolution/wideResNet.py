@@ -3,6 +3,7 @@ from torch import nn
 from einops import rearrange, reduce
 from functools import partial
 import torch.nn.functional as F
+from src.blocks.convolution.MaskedInstanceNorm1d import MaskedInstanceNorm1d
 
 
 
@@ -27,7 +28,7 @@ class WeightStandardizedConv1d(nn.Conv1d):
     weight standardization purportedly works synergistically with group normalization
     """
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
         eps = 1e-5 if x.dtype == torch.float32 else 1e-3
 
         weight = self.weight
@@ -43,7 +44,7 @@ class WeightStandardizedConv1d(nn.Conv1d):
             self.padding,
             self.dilation,
             self.groups,
-        )
+        ) * (mask if type(mask) == torch.Tensor else 1)
 
 
 
@@ -61,13 +62,17 @@ class Block(nn.Module):
     def __init__(self, dim, dim_out, groups=1):
         super().__init__()
         self.proj = WeightStandardizedConv1d(dim, dim_out, 3, padding=1)
-        self.norm = nn.GroupNorm(groups, dim_out)
+        # self.norm = nn.GroupNorm(groups, dim_out)
+        self.norm = MaskedInstanceNorm1d(dim_out)
         self.act = nn.SiLU()
 
-    def forward(self, x, t_mul=None, t_add=None):
+    def forward(self, x, t_mul=None, t_add=None, mask=None):
         # Project and normalize the embeddings
-        x = self.proj(x)
-        x = self.norm(x)
+        x = self.proj(x, mask=mask)
+        if type(mask) != torch.Tensor:
+            x = self.norm(x)
+        else:
+            x = self.norm(x, mask)
 
         # To add the class and time information, the
         # embedding is scaled by the time embeddings
@@ -82,7 +87,7 @@ class Block(nn.Module):
 
         # Apply the SiLU layer to the embeddings
         x = self.act(x)
-        return x
+        return x * mask if type(mask) == torch.Tensor else x
 
 
 
@@ -116,9 +121,9 @@ class ResnetBlock(nn.Module):
         # Convolutional blocks for residual and projections
         self.block1 = Block(inCh, outCh, groups=8 if inCh > 4 and inCh%8==0 and outCh%8==0 else 1)
         self.block2 = Block(outCh, outCh, groups=8 if outCh > 4 and outCh%8==0 else 1)
-        self.res_conv = nn.Conv1d(inCh, outCh, 1) if inCh != outCh else nn.Identity()
+        self.res_conv = WeightStandardizedConv1d(inCh, outCh, 1) if inCh != outCh else nn.Identity()
 
-    def forward(self, x, t=None):
+    def forward(self, x, t=None, mask=None):
         # Apply the class and time projections
         t_mul, t_add = None, None
         if exists(self.t_mlp_mul) and exists(t):
@@ -130,6 +135,6 @@ class ResnetBlock(nn.Module):
 
         # Apply the convolutional blocks and
         # output projection with a residual connection
-        h = self.block1(x, t_mul, t_add)
-        h = self.block2(h)
-        return h + self.res_conv(x)
+        h = self.block1(x, t_mul, t_add, mask)
+        h = self.block2(h, mask=mask)
+        return h + self.res_conv(x) if x.shape == h.shape else self.res_conv(x, mask=mask)

@@ -62,13 +62,13 @@ class Diffusion_Utils:
             torch.sqrt(1-gammas_next)*x_1_pred
             
             
-    def take_cold_diffusion_step(self, x_t, x_1_pred, t_now, t_next):
+    def take_cold_diffusion_step(self, x_t, x_0_pred, t_now, t_next):
         # Compute the gamma values for the timesteps
         gammas = linear_scheduler(t_now).reshape(-1, 1, 1)
         gammas_next = linear_scheduler(t_next).reshape(-1, 1, 1)
         
         # Get the prediction for x_0 (posterior) and x_1 (prior)
-        x_0_hat = x_1_pred
+        x_0_hat = x_0_pred
         x_1_hat = (x_t-torch.sqrt(gammas)*x_0_hat)/torch.sqrt(1-gammas) # Obtained by solving the forward noising equation for x_1
         
         # Predicted x_t
@@ -99,14 +99,27 @@ class Diffusion_Utils:
             t = 1-(step/num_steps)
             t_next = (1 - (step+1) / num_steps).clamp(0, 1)
             
-            # Predict the original x_1 (prior)
+            # Predict the human speech x_0 (posterior)
             positional_encodings = self.t_to_positional_embeddings(t.squeeze(1, -1))
-            x_1_pred = model(x_t, cond, positional_encodings)
+            x_0_pred = model(x_t, cond, positional_encodings)
             
             # Take DDIM step on the predicted x_1 prior
             # x_t = self.take_ddim_step(x_t, x_1_pred, t, t_next, step==0)
             
-            # Take Cold Diffusion step on the predicted x_1 prior
-            x_t = self.take_cold_diffusion_step(x_t, x_1_pred, t, t_next)
+            # Take Cold Diffusion step on the predicted x_0 posterior
+            x_t = self.take_cold_diffusion_step(x_t, x_0_pred, t, t_next)
+            
+        ### Final prediction
+        step = num_steps
         
-        return x_t
+        # Convert timestep between 0 and 1
+        # and start at 1 instead of 0. Then
+        # get the next timestep.
+        step = torch.tensor(step).to(x_1.device).repeat(x_1.shape[0], 1, 1)
+        t = 1-(step/num_steps)
+        
+        # Predict the original x_1 (prior)
+        positional_encodings = self.t_to_positional_embeddings(t.squeeze(1, -1))
+        x_0_pred = model(x_t, cond, positional_encodings)
+        
+        return x_0_pred

@@ -2,7 +2,7 @@ Small_Dataset/
 audio_dataset/
 audio/
 audio_stylized*
-checkpoints/
+checkpoints*
 audio_samples/
 
 

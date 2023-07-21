@@ -138,7 +138,7 @@ class Model():
         
         
         
-        for epoch in range(4, 10000):
+        for epoch in range(0, 10000):
             # Total batch loss
             batch_loss = 0
             

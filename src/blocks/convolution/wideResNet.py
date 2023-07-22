@@ -1,9 +1,12 @@
 import torch
 from torch import nn
-from einops import rearrange, reduce
-from functools import partial
-import torch.nn.functional as F
+from einops import rearrange
 from src.blocks.convolution.MaskedInstanceNorm1d import MaskedInstanceNorm1d
+
+try:
+    from src.blocks.convolution.WeightStandardizedConv1d import WeightStandardizedConv1d
+except ModuleNotFoundError:
+    from .WeightStandardizedConv1d import WeightStandardizedConv1d
 
 
 
@@ -15,36 +18,6 @@ from src.blocks.convolution.MaskedInstanceNorm1d import MaskedInstanceNorm1d
 # Check if something exists. Return None if it doesn't
 def exists(x):
     return x is not None
-
-
-
-
-
-# Weight standardization is shown to improve convolutions
-# when using groupNorm.
-class WeightStandardizedConv1d(nn.Conv1d):
-    """
-    https://arxiv.org/abs/1903.10520
-    weight standardization purportedly works synergistically with group normalization
-    """
-
-    def forward(self, x, mask=None):
-        eps = 1e-5 if x.dtype == torch.float32 else 1e-3
-
-        weight = self.weight
-        mean = reduce(weight, "o ... -> o 1 1", "mean")
-        var = reduce(weight, "o ... -> o 1 1", partial(torch.var, unbiased=False))
-        normalized_weight = (weight - mean) * (var + eps).rsqrt()
-
-        return F.conv1d(
-            x,
-            normalized_weight,
-            self.bias,
-            self.stride,
-            self.padding,
-            self.dilation,
-            self.groups,
-        ) * (mask if type(mask) == torch.Tensor else 1)
 
 
 

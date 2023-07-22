@@ -7,11 +7,13 @@ from src.Model import Model
 from TTS.api import TTS
 import sys
 import random
+import contextlib
 
 
 
 
 class WavDataset(Dataset):
+    @torch.no_grad()
     def __init__(self, root_dir, load_in_memory=False, limit=-1):
         self.load_in_memory = load_in_memory
         
@@ -68,11 +70,11 @@ class WavDataset(Dataset):
         if self.load_in_memory:
             self.data = [(waveform, text, self.tts.tts(text)) for waveform, text in self.data]
         
-
+    @torch.no_grad()
     def __len__(self):
         return self.total
     
-    
+    @torch.no_grad()
     def load_item(self, idx, only_wav=False):
         # Get the speaker and index in speaker
         speaker, idx = self.reverse_idx[idx]
@@ -101,14 +103,8 @@ class WavDataset(Dataset):
             text = ''.join([c for c in text if c.isalnum() or c == ' ']) + '.'
             
 
-            # Turn off print dubugging
-            old_stdout = sys.stdout
-            sys.stdout = open(os.devnull, "w")
-            
-            waveform_unstylized, sample_rate_unstylized = (torch.tensor(self.tts.tts(text)).float().unsqueeze(0), self.tts_sr)
-            
-            # Turn back on printing
-            sys.stdout = old_stdout
+            with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
+                waveform_unstylized, sample_rate_unstylized = (torch.tensor(self.tts.tts(text)).float().unsqueeze(0), self.tts_sr)
         
         # Resample audio to 24000 Hz
         if sample_rate != 24000:
@@ -118,6 +114,7 @@ class WavDataset(Dataset):
         return waveform, waveform_unstylized, text
     
 
+    @torch.no_grad()
     def __getitem__(self, idx):
         # Load in the data
         waveform, waveform_unstylized, text = self.load_item(idx)
@@ -136,7 +133,7 @@ class WavDataset(Dataset):
             
             # Get the conditional audio
             for i in range(number_of_indices):
-                # Get the new index and return it so it can't be used again
+                # Get the new index and remove it so it can't be used again
                 idx2 = random.choice(indices)
                 indices.remove(idx2)
                 
@@ -170,14 +167,15 @@ class WavDataset(Dataset):
 
 def train():
     data_path = "audio_stylized_speaker"
-    batch_size = 20
+    batch_size = 16
     num_workers = 8
     prefetch_factor = 3
-    limit = 10
+    limit = 25
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     use_noise = False
     
-    checkpoint_path = "checkpoints2/epoch_3/"
+    # checkpoint_path = "checkpoints2/epoch_30/"
+    checkpoint_path = None
     
     
     
@@ -191,9 +189,9 @@ def train():
                             batch_size=batch_size,
                             shuffle=True,  
                             collate_fn=lambda x: x,
-                            num_workers=num_workers,
-                            prefetch_factor=prefetch_factor,
-                            persistent_workers=True
+                            num_workers=num_workers if num_workers > 0 else 0,
+                            prefetch_factor=prefetch_factor if num_workers > 0 else None,
+                            persistent_workers=True if num_workers > 0 else False
     )
     
     

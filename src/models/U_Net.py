@@ -10,11 +10,15 @@ try:
     from src.blocks.convolution.Efficient_Channel_Attention import Efficient_Channel_Attention
     from src.blocks.convolution.Multihead_Attn import Multihead_Attn
     from src.blocks.convolution.wideResNet import WeightStandardizedConv1d
+    from src.blocks.convolution.WeightStandardizedConv1d import WeightStandardizedConv1d
+    from src.blocks.convolution.WeightStandardizedConvTranspose1d import WeightStandardizedConvTranspose1d
 except ModuleNotFoundError:
     from ..blocks.convolution.unetBlock import unetBlock
     from ..blocks.convolution.Efficient_Channel_Attention import Efficient_Channel_Attention
     from ..blocks.convolution.Multihead_Attn import Multihead_Attn
-    from ..blocks.convolution.wideResNet import WeightStandardizedConv1d
+    from ..blocks.convoltuion.WeightStandardizedConv1d import WeightStandardizedConv1d
+    from ..blocks.convoltuion.WeightStandardizedConvTranspose1d import WeightStandardizedConvTranspose1d
+    
 
 
 
@@ -80,7 +84,7 @@ class U_Net(nn.Module):
                 blocks.append(unetBlock(embCh*(2**(chMult*i)), embCh*(2**(chMult*i)), blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
                 blocks.append(unetBlock(embCh*(2**(chMult*i)), outCh, blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
             else:
-                blocks.append(nn.ConvTranspose1d(embCh*(2**(chMult*(i))), embCh*(2**(chMult*(i))), kernel_size=4, stride=2, padding=1))
+                blocks.append(WeightStandardizedConvTranspose1d(embCh*(2**(chMult*(i))), embCh*(2**(chMult*(i))), kernel_size=4, stride=2, padding=1))
                 blocks.append(unetBlock(2*embCh*(2**(chMult*i)), embCh*(2**(chMult*(i-1))), blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
         self.upBlocks = nn.Sequential(
             *blocks
@@ -110,7 +114,9 @@ class U_Net(nn.Module):
     #       X value of shape (N, t_dim)
     #   masks - (optional) Batch of masks for each X value
     #       of shape (N, 1, T)
-    def forward(self, X, y=None, t=None, masks=None):
+    #   masks_cond - (optional) Batch of masks for each c value
+    #       of shape (N, 1, T2)
+    def forward(self, X, y=None, t=None, masks=None, masks_cond=None):
         # conditional information assertion
         if type(y) != type(None):
             assert type(self.cond_dim) != type(None), "cond_dim must be specified when using condtional information."
@@ -123,7 +129,7 @@ class U_Net(nn.Module):
         residuals = []
         residual_masks = []
 
-        X = self.inConv(X, masks)
+        X = self.inConv(X, masks, norm=False)
         
         # Send the input through the downsampling blocks
         # while saving the output of each one
@@ -131,7 +137,7 @@ class U_Net(nn.Module):
         b = 0
         while b < len(self.downBlocks):
             # Convoltuion blocks
-            X = self.downBlocks[b](X, y, t, masks)
+            X = self.downBlocks[b](X, y, t, masks, masks_cond)
             
             # Save residual from convolutions
             residuals.append(X.clone())
@@ -144,7 +150,7 @@ class U_Net(nn.Module):
                 masks = masks[:, :, ::2] if type(masks) == torch.Tensor else None
                 
                 # Downsample the input
-                X = self.downBlocks[b](X, masks)
+                X = self.downBlocks[b](X, masks, norm=False)
                 b += 1
             
         # Reverse the residuals
@@ -163,24 +169,24 @@ class U_Net(nn.Module):
         b = 0
         while b < len(self.upBlocks):
             # Upsample the input and get he masks
-            if b < len(self.upBlocks) and type(self.upBlocks[b]) == nn.ConvTranspose1d:
-                # Upsample
-                X = self.upBlocks[b](X)
-                b += 1
-                
+            if b < len(self.upBlocks) and type(self.upBlocks[b]) == WeightStandardizedConvTranspose1d:
                 # Get masks for this layer
                 masks = residual_masks.pop()
                 
+                # Upsample
+                X = self.upBlocks[b](X, masks, norm=False)
+                b += 1
+                
             # Other residual blocks
             if len(residuals) > 0:
-                X = self.upBlocks[b](torch.cat((X[:, :, :residuals[0].shape[-1]], residuals[0]), dim=1), y, t, masks)
+                X = self.upBlocks[b](torch.cat((X[:, :, :residuals[0].shape[-1]], residuals[0]), dim=1), y, t, masks, masks_cond)
                 
             # Final residual block
             else:
-                X = self.upBlocks[b](X, y, t, masks)
+                X = self.upBlocks[b](X, y, t, masks, masks_cond)
             b += 1
             residuals = residuals[1:]
         
         # Send the output through the final block
         # and return the output
-        return self.out(X, masks)
+        return self.out(X, masks, norm=False)

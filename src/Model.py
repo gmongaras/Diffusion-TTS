@@ -230,7 +230,7 @@ class Model():
                     
                 # Forward pass to get the predicted unstylized audio
                 # from the interpolated audio
-                stylized_pred = self.model(audio_super, conditional if conditional_audio is not None else None, positional_embeddings, masks_stylized)
+                stylized_pred = self.model(audio_super, conditional if conditional_audio is not None else None, positional_embeddings, masks_stylized, masks_conditional)
                 
                 # Compute loss
                 # We want the model to predict the stylized audio
@@ -241,7 +241,7 @@ class Model():
                 loss.backward()
                 optimizer.step()
                 
-                # print(f"Epoch: {epoch} | Loss: {loss.item()}")
+                print(f"Epoch: {epoch} | Loss: {loss.item()}")
                 
                 batch_loss += loss.item()
                 
@@ -255,24 +255,30 @@ class Model():
             ## Audio samples
             if not os.path.exists("audio_samples/epoch_{}".format(epoch)):
                 os.makedirs("audio_samples/epoch_{}".format(epoch))
+            
+            # Remvoe zero pad from audio
+            unstylized = unstylized[:1, :, :masks_stylized[0].sum()]
+            if not self.use_noise:
+                conditional = conditional[:1, :, :masks_conditional[0].sum()]
+                
             # Generate audio prediction by diffusing the unstylized audio to the predicted stylized audio
-            stylized_audio_pred = self.diffusion_utils.sample_data(self.model, unstylized[:1, :, :masks_stylized[0].sum()], cond=conditional[:1] if conditional_audio is not None else None)
+            stylized_audio_pred = self.diffusion_utils.sample_data(self.model, unstylized, cond=conditional if conditional_audio is not None else None)
             stylized_audio_pred *= self.scale
             # Save audio samples
-            torchaudio.save(f"audio_samples/epoch_{epoch}/stylized.wav", stylized_audio[0].cpu() * self.scale, 24000)
+            torchaudio.save(f"audio_samples/epoch_{epoch}/stylized.wav", stylized_audio[0].cpu(), 24000)
             if not self.use_noise:
-                torchaudio.save(f"audio_samples/epoch_{epoch}/unstylized.wav", unstylized_audio[0].cpu() * self.scale, 24000)
+                torchaudio.save(f"audio_samples/epoch_{epoch}/unstylized.wav", unstylized_audio[0].cpu(), 24000)
             torchaudio.save(f"audio_samples/epoch_{epoch}/unstylized_recon.wav", self.encodec_model.decoder(stylized_audio_pred.to(self.device))[0].cpu(), 24000)
             
             # Save model checkpoints
-            if not os.path.exists("checkpoints2/epoch_{}".format(epoch)):
-                os.makedirs("checkpoints2/epoch_{}".format(epoch))
-            torch.save(self.model.state_dict(), f"checkpoints2/epoch_{epoch}/model.pth")
+            if not os.path.exists("checkpoints3/epoch_{}".format(epoch)):
+                os.makedirs("checkpoints3/epoch_{}".format(epoch))
+            torch.save(self.model.state_dict(), f"checkpoints3/epoch_{epoch}/model.pth")
             
             # Save optimizer checkpoints
-            if not os.path.exists("checkpoints2/epoch_{}".format(epoch)):
-                os.makedirs("checkpoints2/epoch_{}".format(epoch))
-            torch.save(optimizer.state_dict(), f"checkpoints2/epoch_{epoch}/optimizer.pth")
+            if not os.path.exists("checkpoints3/epoch_{}".format(epoch)):
+                os.makedirs("checkpoints3/epoch_{}".format(epoch))
+            torch.save(optimizer.state_dict(), f"checkpoints3/epoch_{epoch}/optimizer.pth")
             
             
             

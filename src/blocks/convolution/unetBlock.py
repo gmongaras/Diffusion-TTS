@@ -61,9 +61,10 @@ class unetBlock(nn.Module):
     #   y - (optional) Tensor of shape (N, cond_dim, T)
     #   t - (optional) Tensor of shape (N, t_dim)
     #   mask - (optional) Tensor of shape (N, 1, T)
+    #   mask_cond - (optional) Tensor of shape (N, 1, T)
     # Output:
     #   Tensor of shape (N, outCh, L, W)
-    def forward(self, X, y=None, t=None, mask=None):
+    def forward(self, X, y=None, t=None, mask=None, mask_cond=None):
         # Class assertion
         if y != None:
             assert self.useCls == True, \
@@ -73,7 +74,7 @@ class unetBlock(nn.Module):
             if type(b) == ResnetBlock:
                 X = b(X, t, mask)
             elif type(b) == ConditionalBlock or type(b) == ConditionalBlock2:
-                X = b(X, y)
+                X = b(X, y, mask, mask_cond)
             else:
                 X = b(X)
         return X

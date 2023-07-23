@@ -170,11 +170,11 @@ def train():
     batch_size = 16
     num_workers = 8
     prefetch_factor = 3
-    limit = 25
+    limit = 50
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     use_noise = False
     
-    # checkpoint_path = "checkpoints2/epoch_30/"
+    # checkpoint_path = "checkpoints4/epoch_8/"
     checkpoint_path = None
     
     

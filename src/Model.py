@@ -103,6 +103,9 @@ class Model():
         # Loss function
         loss_fn = torch.nn.MSELoss()
         
+        # Cosine annealing scheduler with warm restarts
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1, eta_min=1e-6)
+        
         
         
         
@@ -158,17 +161,46 @@ class Model():
                         unstylized_max_length = max([x.shape[1] for x in unstylized_audio])
                     conditional_max_length = max([x.shape[1] for x in conditional_audio])
                     
-                    # Construct masks for the max length audio
-                    masks_stylized = torch.tensor([x.shape[1] for x in stylized_audio]).int().to(self.device)
+                    # Construct masks for the max length audio. Note that
+                    # the stylized masks should be in terms of the unstylized
+                    # masks as we won't know how long the stylized audio will
+                    # be during inference.
+                    # The conditional masks are in terms of themselves
+                    # as we know their length during inference.
+                    masks_stylized = torch.tensor([x.shape[1] for x in unstylized_audio]).int().to(self.device)
                     if not self.use_noise:
-                        masks_unstylized = torch.tensor([x.shape[1] for x in stylized_audio]).int().to(self.device)
-                    masks_conditional = torch.tensor([x.shape[1] for x in stylized_audio]).int().to(self.device)
+                        masks_unstylized = torch.tensor([x.shape[1] for x in unstylized_audio]).int().to(self.device)
+                    masks_conditional = torch.tensor([x.shape[1] for x in conditional_audio]).int().to(self.device)
                     
-                    # Pad all audio to max lengths
-                    stylized_audio = torch.stack([torch.nn.functional.pad(a, (0, stylized_max_length - a.shape[1], 0, 0)) for a in stylized_audio])
+                    # Pad the unstylized audio and conditional audio to the max length
                     if not self.use_noise:
                         unstylized_audio = torch.stack([torch.nn.functional.pad(a, (0, unstylized_max_length - a.shape[1], 0, 0)) for a in unstylized_audio])
                     conditional_audio = torch.stack([torch.nn.functional.pad(a, (0, conditional_max_length - a.shape[1], 0, 0)) for a in conditional_audio])
+                    
+                    # If the stylized audio is shorter than the unstylized audio,
+                    # then we need to pad the stylized audio to the same length
+                    # as the unstylized audio. If the unstylized audio is shorter
+                    # than the stylized audio, then we need to trim the stylized
+                    # audio to the same length as the unstylized audio.
+                    stylized_audio = torch.stack([
+                        torch.nn.functional.pad(a, (0, unstylized_max_length - a.shape[1], 0, 0)) 
+                            if a.shape[1] < unstylized_max_length 
+                            else a[:, :unstylized_max_length] 
+                            for a in stylized_audio
+                    ])
+                        
+                    # The max length of the stylized audio is now the same as the
+                    # max length of the unstylized audio. The masks should
+                    # also be the same as the unstylized audio.
+                    stylized_max_length = unstylized_max_length
+                    masks_stylized = masks_unstylized.clone()
+                    
+                    # # Pad all audio to max lengths. Note that
+                    # # we pad the
+                    # stylized_audio = torch.stack([torch.nn.functional.pad(a, (0, stylized_max_length - a.shape[1], 0, 0)) for a in stylized_audio])
+                    # if not self.use_noise:
+                    #     unstylized_audio = torch.stack([torch.nn.functional.pad(a, (0, unstylized_max_length - a.shape[1], 0, 0)) for a in unstylized_audio])
+                    # conditional_audio = torch.stack([torch.nn.functional.pad(a, (0, conditional_max_length - a.shape[1], 0, 0)) for a in conditional_audio])
                     
                     # Encode the audio using encodec
                     stylized, masks_stylized = self.process_data(stylized_audio, masks_stylized)
@@ -176,15 +208,18 @@ class Model():
                         unstylized, masks_unstylized = self.process_data(unstylized_audio, masks_unstylized)
                     conditional, masks_conditional = self.process_data(conditional_audio, masks_conditional)
                     
-                    if not self.use_noise:
-                        if stylized.shape[2] < unstylized.shape[2]:
-                            # Pad the stlyized audio to the same length as the unstylized audio
-                            stylized = torch.nn.functional.pad(stylized, (0, unstylized.shape[2] - stylized.shape[2], 0, 0))
-                            masks_stylized = masks_unstylized.clone()
-                        else:
-                            # Pad the unstlyized audio to the same length as the stylized audio
-                            unstylized = torch.nn.functional.pad(unstylized, (0, stylized.shape[2] - unstylized.shape[2], 0, 0))
-                            masks_unstylized = masks_stylized.clone()
+                    # if not self.use_noise:
+                    #     if stylized.shape[2] < unstylized.shape[2]:
+                    #         # Pad the stlyized audio to the same length as the unstylized audio
+                    #         stylized = torch.nn.functional.pad(stylized, (0, unstylized.shape[2] - stylized.shape[2], 0, 0))
+                    #         masks_stylized = masks_unstylized.clone()
+                    #     else:
+                    #         # Trim the stylized audio to the same length as the unstylized audio
+                    #         stylized = stylized[:, :, :unstylized.shape[2]]
+                    #         masks_stylized = masks_unstylized.clone()
+                    #         # # Pad the unstlyized audio to the same length as the stylized audio
+                    #         # unstylized = torch.nn.functional.pad(unstylized, (0, stylized.shape[2] - unstylized.shape[2], 0, 0))
+                    #         # masks_unstylized = masks_stylized.clone()
                     
                     
                     # Audio is of shape (N, E, T)
@@ -239,9 +274,10 @@ class Model():
                 # Backward pass
                 optimizer.zero_grad()
                 loss.backward()
-                optimizer.step()
+                optimizer.step(lambda : epoch + batch_num / len(dataloader))
+                scheduler.step()
                 
-                print(f"Epoch: {epoch} | Loss: {loss.item()}")
+                # print(f"Epoch: {epoch} | Loss: {loss.item()}")
                 
                 batch_loss += loss.item()
                 
@@ -252,12 +288,15 @@ class Model():
                 
             print(f"Epoch: {epoch} | Batch Loss: {batch_loss/len(dataloader)}")
             
+            sample_dir = "audio_samples2"
+            checkpoints_dir = "checkpoints4"
+            
             ## Audio samples
-            if not os.path.exists("audio_samples/epoch_{}".format(epoch)):
-                os.makedirs("audio_samples/epoch_{}".format(epoch))
+            if not os.path.exists(f"{sample_dir}/epoch_{epoch}"):
+                os.makedirs(f"{sample_dir}/epoch_{epoch}")
             
             # Remvoe zero pad from audio
-            unstylized = unstylized[:1, :, :masks_stylized[0].sum()]
+            unstylized = unstylized[:1, :, :masks_unstylized[0].sum()]
             if not self.use_noise:
                 conditional = conditional[:1, :, :masks_conditional[0].sum()]
                 
@@ -265,26 +304,32 @@ class Model():
             stylized_audio_pred = self.diffusion_utils.sample_data(self.model, unstylized, cond=conditional if conditional_audio is not None else None)
             stylized_audio_pred *= self.scale
             # Save audio samples
-            torchaudio.save(f"audio_samples/epoch_{epoch}/stylized.wav", stylized_audio[0].cpu(), 24000)
+            torchaudio.save(f"{sample_dir}/epoch_{epoch}/stylized.wav", stylized_audio[0].cpu(), 24000)
             if not self.use_noise:
-                torchaudio.save(f"audio_samples/epoch_{epoch}/unstylized.wav", unstylized_audio[0].cpu(), 24000)
-            torchaudio.save(f"audio_samples/epoch_{epoch}/unstylized_recon.wav", self.encodec_model.decoder(stylized_audio_pred.to(self.device))[0].cpu(), 24000)
+                torchaudio.save(f"{sample_dir}/epoch_{epoch}/unstylized.wav", unstylized_audio[0].cpu(), 24000)
+            torchaudio.save(f"{sample_dir}/epoch_{epoch}/unstylized_recon.wav", self.encodec_model.decoder(stylized_audio_pred.to(self.device))[0].cpu(), 24000)
             
             # Save model checkpoints
-            if not os.path.exists("checkpoints3/epoch_{}".format(epoch)):
-                os.makedirs("checkpoints3/epoch_{}".format(epoch))
-            torch.save(self.model.state_dict(), f"checkpoints3/epoch_{epoch}/model.pth")
+            if not os.path.exists(f"{checkpoints_dir}/epoch_{epoch}"):
+                os.makedirs(f"{checkpoints_dir}/epoch_{epoch}")
+            torch.save(self.model.state_dict(), f"{checkpoints_dir}/epoch_{epoch}/model.pth")
             
             # Save optimizer checkpoints
-            if not os.path.exists("checkpoints3/epoch_{}".format(epoch)):
-                os.makedirs("checkpoints3/epoch_{}".format(epoch))
-            torch.save(optimizer.state_dict(), f"checkpoints3/epoch_{epoch}/optimizer.pth")
+            if not os.path.exists(f"{checkpoints_dir}/epoch_{epoch}"):
+                os.makedirs(f"{checkpoints_dir}/epoch_{epoch}")
+            torch.save(optimizer.state_dict(), f"{checkpoints_dir}/epoch_{epoch}/optimizer.pth")
+            
+            # Save scheduler checkpoints
+            if not os.path.exists(f"{checkpoints_dir}/epoch_{epoch}"):
+                os.makedirs(f"{checkpoints_dir}/epoch_{epoch}")
+            torch.save(scheduler.state_dict(), f"{checkpoints_dir}/epoch_{epoch}/scheduler.pth")
             
             
             
             
     
     # Given text and a list of conditionals, generate the stylized audio
+    @torch.no_grad()
     def infer(self, text, conditionals=[], num_steps=100):
         # Create the unstylized audio
         try:
@@ -299,7 +344,6 @@ class Model():
         # Pass the data through the encodec
         unstylized, _ = self.process_data(unstylized.unsqueeze(0))
         conditionals = [self.process_data(c)[0] for c in conditionals]
-        conditionals_0 = conditionals[0]
         
         # Pad the unstylized audio to the nearest second
         # Note: 75 is a second in the latent dimension
@@ -330,7 +374,7 @@ class Model():
         self.model.eval()
         
         # Load in the optimizer
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-4)
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4)
         optimizer.load_state_dict(torch.load(path + "/optimizer.pth", map_location=self.device))
         
         return optimizer

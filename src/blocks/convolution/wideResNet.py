@@ -36,16 +36,19 @@ class Block(nn.Module):
         super().__init__()
         self.proj = WeightStandardizedConv1d(dim, dim_out, 3, padding=1)
         # self.norm = nn.GroupNorm(groups, dim_out)
-        self.norm = MaskedInstanceNorm1d(dim_out)
+        self.norm = nn.LayerNorm(dim_out)
         self.act = nn.SiLU()
 
     def forward(self, x, t_mul=None, t_add=None, mask=None):
         # Project and normalize the embeddings
         x = self.proj(x, mask=mask)
-        if type(mask) != torch.Tensor:
-            x = self.norm(x)
-        else:
-            x = self.norm(x, mask)
+        # if type(mask) != torch.Tensor:
+        #     x = self.norm(x)
+        # else:
+        #     x = self.norm(x, mask)
+        
+        # Layer norm doesn't need to be masked
+        x = self.norm(x.transpose(-1, -2)).transpose(-1, -2)
 
         # To add the class and time information, the
         # embedding is scaled by the time embeddings

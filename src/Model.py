@@ -20,6 +20,7 @@ class Model():
         self.use_noise = use_noise
         self.sampling_rate = 24_000
         self.scale = 10
+        self.use_scheduler = False
         
         
         ### Encodec
@@ -104,7 +105,8 @@ class Model():
         loss_fn = torch.nn.MSELoss()
         
         # Cosine annealing scheduler with warm restarts
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1, eta_min=1e-6)
+        if self.use_scheduler:
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1, eta_min=1e-6)
         
         
         
@@ -267,6 +269,25 @@ class Model():
                 # from the interpolated audio
                 stylized_pred = self.model(audio_super, conditional if conditional_audio is not None else None, positional_embeddings, masks_stylized, masks_conditional)
                 
+                
+                
+                # # Tests
+                # with torch.no_grad():
+                #     # audio_super = audio_super * 10_000
+                #     # positional_embeddings = positional_embeddings * 10_000
+                #     comb_sum = masks_stylized[0].sum()
+                #     cond_sum = masks_conditional[0].sum()
+                #     stylized_pred = self.model.eval()(audio_super.clone(), conditional.clone() if conditional_audio is not None else None, positional_embeddings.clone(), masks_stylized.clone(), masks_conditional.clone())
+                #     # stylized_pred = stylized_pred[:1, :, :comb_sum]
+                #     stylized_pred *= self.scale
+                    
+                #     stylized_pred_ = self.model.eval()(audio_super[:1, :, :comb_sum], conditional[:1, :, :cond_sum] if conditional_audio is not None else None, positional_embeddings[:1])
+                #     stylized_pred_ *= self.scale
+                    
+                #     diff = ((stylized_pred[0, :, :stylized_pred_.shape[-1]] - stylized_pred_)**2).sum()
+                #     print()
+                
+                
                 # Compute loss
                 # We want the model to predict the stylized audio
                 loss = loss_fn(stylized, stylized_pred)
@@ -275,9 +296,10 @@ class Model():
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step(lambda : epoch + batch_num / len(dataloader))
-                scheduler.step()
+                if self.use_scheduler:
+                    scheduler.step()
                 
-                # print(f"Epoch: {epoch} | Loss: {loss.item()}")
+                print(f"Epoch: {epoch} | Loss: {loss.item()}")
                 
                 batch_loss += loss.item()
                 
@@ -288,8 +310,8 @@ class Model():
                 
             print(f"Epoch: {epoch} | Batch Loss: {batch_loss/len(dataloader)}")
             
-            sample_dir = "audio_samples2"
-            checkpoints_dir = "checkpoints4"
+            sample_dir = "audio_samples3"
+            checkpoints_dir = "checkpoints5"
             
             ## Audio samples
             if not os.path.exists(f"{sample_dir}/epoch_{epoch}"):
@@ -320,9 +342,10 @@ class Model():
             torch.save(optimizer.state_dict(), f"{checkpoints_dir}/epoch_{epoch}/optimizer.pth")
             
             # Save scheduler checkpoints
-            if not os.path.exists(f"{checkpoints_dir}/epoch_{epoch}"):
-                os.makedirs(f"{checkpoints_dir}/epoch_{epoch}")
-            torch.save(scheduler.state_dict(), f"{checkpoints_dir}/epoch_{epoch}/scheduler.pth")
+            if self.use_scheduler:
+                if not os.path.exists(f"{checkpoints_dir}/epoch_{epoch}"):
+                    os.makedirs(f"{checkpoints_dir}/epoch_{epoch}")
+                torch.save(scheduler.state_dict(), f"{checkpoints_dir}/epoch_{epoch}/scheduler.pth")
             
             
             

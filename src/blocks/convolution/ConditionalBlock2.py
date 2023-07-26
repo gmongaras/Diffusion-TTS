@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from .MaskedInstanceNorm1d import MaskedInstanceNorm1d
 
 
 
@@ -21,7 +22,8 @@ class ConditionalBlock2(nn.Module):
         # Ouptut is the same size as the input
         self.out_proj = nn.Conv1d(embed_dim, embed_dim, 1)
         
-        self.layer_norm = nn.GroupNorm(1, embed_dim)
+        # self.layer_norm = nn.GroupNorm(1, embed_dim)
+        self.layer_norm1 = nn.LayerNorm(embed_dim)
         
     def _split_heads(self, x):
         # Split the last dimension into (num_heads, depth)
@@ -32,16 +34,18 @@ class ConditionalBlock2(nn.Module):
         return x.reshape(x.shape[0], self.embed_dim, -1)
         
         
-    def forward(self, x, y):
-        # Project the conditional infomration to queries, keys
+    def forward(self, x, y, mask=None, mask_cond=None):
+        # Project the conditional information to queries, keys
         # and the input to values
         q, k, v = self.q_proj(y), self.k_proj(y), self.v_proj(x)
         
         # Split each embedding into self.num_heads pieces
         q, k, v = self._split_heads(q), self._split_heads(k), self._split_heads(v)
         
-        # Compute attention like normal
-        scores = ((q@k.transpose(-1, -2)) / (self.embed_dim ** 0.5)).softmax(dim=-1)
+        # Compute attention along the embedding dimension
+        scores = ((q@k.transpose(-1, -2)) / (self.embed_dim//self.num_heads ** 0.5))
+        
+        # Apply the conditional mask
         
         # Compute the output
         out = scores@v

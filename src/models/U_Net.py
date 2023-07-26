@@ -128,8 +128,15 @@ class U_Net(nn.Module):
         # Saved residuals to add to the upsampling
         residuals = []
         residual_masks = []
+        
+        # Pre masking
+        if type(masks) == torch.Tensor:
+            X = X * masks
+        if type(masks_cond) == torch.Tensor:
+            y = y * masks_cond
 
-        X = self.inConv(X, masks, norm=False)
+        # Send the input through the input convolution
+        X = self.inConv(X, masks)
         
         # Send the input through the downsampling blocks
         # while saving the output of each one
@@ -150,7 +157,7 @@ class U_Net(nn.Module):
                 masks = masks[:, :, ::2] if type(masks) == torch.Tensor else None
                 
                 # Downsample the input
-                X = self.downBlocks[b](X, masks, norm=False)
+                X = self.downBlocks[b](X, masks)
                 b += 1
             
         # Reverse the residuals
@@ -158,9 +165,10 @@ class U_Net(nn.Module):
         
         # Send the output of the downsampling block
         # through the intermediate blocks
+        # return X
         for b in self.intermediate:
             try:
-                X = b(X, y, t, masks)
+                X = b(X, y=y, t=t, mask=masks, mask_cond=masks_cond)
             except TypeError:
                 X = b(X)
         
@@ -174,7 +182,7 @@ class U_Net(nn.Module):
                 masks = residual_masks.pop()
                 
                 # Upsample
-                X = self.upBlocks[b](X, masks, norm=False)
+                X = self.upBlocks[b](X, masks)
                 b += 1
                 
             # Other residual blocks
@@ -189,4 +197,4 @@ class U_Net(nn.Module):
         
         # Send the output through the final block
         # and return the output
-        return self.out(X, masks, norm=False)
+        return self.out(X, masks)

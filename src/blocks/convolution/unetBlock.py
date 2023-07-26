@@ -76,5 +76,5 @@ class unetBlock(nn.Module):
             elif type(b) == ConditionalBlock or type(b) == ConditionalBlock2:
                 X = b(X, y, mask, mask_cond)
             else:
-                X = b(X)
+                X = b(X) 
         return X

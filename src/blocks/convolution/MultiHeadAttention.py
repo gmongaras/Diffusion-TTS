@@ -41,27 +41,47 @@ class MultiHeadAttention(nn.Module):
         
     def forward(self, q, k, v, query_mask=None, key_mask=None, value_mask=None, transpose_scores=False):
         # Project the queries, keys and values
-        q, k, v = self.q_proj(q, query_mask, norm=False), self.k_proj(k, key_mask, norm=False), self.v_proj(v, value_mask, norm=False)
+        # Note that the masked states are retained
+        q, k, v = self.q_proj(q, query_mask), self.k_proj(k, key_mask), self.v_proj(v, value_mask)
         
         # Split each embedding into self.num_heads pieces
         q, k, v = self._split_heads(q), self._split_heads(k), self._split_heads(v)
         
         # Compute attention like normal (along time dimension)
-        scores = ((q.permute(0, 1, 3, 2)@k) 
-                    * (query_mask.unsqueeze(-1) if type(query_mask) == torch.Tensor else 1)
-                    * (key_mask.unsqueeze(-2) if type(key_mask) == torch.Tensor else 1)
-                  / (self.embed_dim ** 0.5)).softmax(dim=-1) \
-                      * (key_mask.unsqueeze(-2) if type(key_mask) == torch.Tensor else 1)
+        # Note that the queries are transposed because the input
+        # sequence is (E, T) not (T, E) like normal.
+        # scores = ((q.permute(0, 1, 3, 2)@k) 
+        #             * (query_mask.unsqueeze(-1) if type(query_mask) == torch.Tensor else 1)
+        #             * (key_mask.unsqueeze(-2) if type(key_mask) == torch.Tensor else 1)
+        #           / (self.embed_dim ** 0.5)).softmax(dim=-1) \
+        #               * (key_mask.unsqueeze(-2) if type(key_mask) == torch.Tensor else 1)
+        scores = torch.matmul(q.transpose(-1, -2), k) / (self.embed_dim//self.num_heads ** 0.5)
+        
+        # Key padding mask applied to scores
+        if type(key_mask) == torch.Tensor:
+            scores = scores.masked_fill(key_mask.unsqueeze(-2) == 0, -1e9)
+            
+        # Softmax along the keys
+        scores = scores.softmax(dim=-1)
+        
+        # Query padding mask applied to scores after the
+        # softmax is applied as the result is always
+        # 0 for padded queries
+        if type(query_mask) == torch.Tensor:
+            scores = scores.masked_fill(query_mask.unsqueeze(-1) == 0, 0)
         
         # Compute the output
+        # Again, we need a transpose because the input sequence
+        # is (E, T) not (T, E) like normal.
+        # Note that the output will be masked along the query mask
         if transpose_scores:
-            out = v@scores.transpose(-1, -2)
+            out = (scores.transpose(-1, -2)@v.transpose(-1, -2)).transpose(-1, -2)
         else:
-            out = v@scores
+            out = (scores@v.transpose(-1, -2)).transpose(-1, -2)
         
         # Compute the output and remove the heads
         out = self._combine_heads(out)
         
         # Project output and return
-        return self.out_proj(out, key_mask if not transpose_scores else query_mask, norm=False)
+        return self.out_proj(out, query_mask if not transpose_scores else key_mask)
         

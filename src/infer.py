@@ -6,7 +6,7 @@ from src.Model import Model
 
 
 def infer():
-    checkpoint_path = "checkpoints4/epoch_7/"
+    checkpoint_path = "checkpoints5/epoch_8/"
     text = "Curtain Lectures delivered in the course of Thirty Years by mrs Margaret Caudle, and suffered by Job, her Husband."
     condition_paths = ["audio_stylized_speaker/31/0.wav", "audio_stylized_speaker/31/3.wav"]
     num_steps = 100

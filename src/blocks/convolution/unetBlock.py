@@ -50,6 +50,8 @@ class unetBlock(nn.Module):
                 blocks.append(ResnetBlock(curCh, curCh1, t_dim, dropoutRate))
             if blk == "cond":
                 blocks.append(ConditionalBlock(cond_dim, curCh))
+            if blk == "cond2":
+                blocks.append(ConditionalBlock2(cond_dim, curCh))
 
             curCh = curCh1
 

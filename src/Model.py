@@ -41,7 +41,7 @@ class Model():
         # self.model = Transformer(128, 128, 512, 8).to(self.device)
         embed_dim = 152
         t_embed_dim = 128
-        self.model = U_Net(128, 128, embed_dim, 1, num_blocks=2, blk_types=["res", "cond", "res"], cond_dim=128, t_dim=t_embed_dim).to(self.device)
+        self.model = U_Net(128, 128, embed_dim, 1, num_blocks=2, blk_types=["res", "cond2", "res"], cond_dim=128, t_dim=t_embed_dim).to(self.device)
         
         # Diffusion model utility class
         self.diffusion_utils = Diffusion_Utils(t_embed_dim)

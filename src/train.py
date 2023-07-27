@@ -171,11 +171,12 @@ def train():
     num_workers = 8
     prefetch_factor = 3
     limit = 50
-    # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    device = torch.device("cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # device = torch.device("cpu")
     use_noise = False
+    use_scheduler = True
     
-    # checkpoint_path = "checkpoints5/epoch_7/"
+    # checkpoint_path = "checkpoints_cond2_new/epoch_1/"
     checkpoint_path = None
     
     
@@ -199,7 +200,7 @@ def train():
     
     
     # Create the main model
-    model = Model(device, use_noise)
+    model = Model(device, use_noise, use_scheduler)
     
     # Load in the checkpoint
     if checkpoint_path:

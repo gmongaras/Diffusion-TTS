@@ -6,10 +6,10 @@ from src.Model import Model
 
 
 def infer():
-    checkpoint_path = "checkpoints5/epoch_9/"
-    text = "Curtain Lectures delivered in the course of Thirty Years by mrs Margaret Caudle, and suffered by Job, her Husband."
-    condition_paths = ["audio_stylized_speaker/31/0.wav", "audio_stylized_speaker/31/3.wav"]
-    num_steps = 1
+    checkpoint_path = "checkpoints_cond2_new/epoch_0/"
+    text = "I agree with you, but I hate you!"
+    condition_paths = ["audio_stylized_speaker/29/1.wav", "audio_stylized_speaker/29/2.wav"]
+    num_steps = 100
     outfile = "output.wav"
     device = torch.device("cuda:0")
     # device = torch.device("cpu")

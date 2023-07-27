@@ -144,7 +144,7 @@ class U_Net(nn.Module):
         b = 0
         while b < len(self.downBlocks):
             # Convoltuion blocks
-            X = self.downBlocks[b](X, y, t, masks, masks_cond)
+            X = self.downBlocks[b](X, y, t, mask=masks, mask_cond=masks_cond)
             
             # Save residual from convolutions
             residuals.append(X.clone())

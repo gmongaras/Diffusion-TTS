@@ -111,6 +111,6 @@ class ResnetBlock(nn.Module):
 
         # Apply the convolutional blocks and
         # output projection with a residual connection
-        h = self.block1(x, t_mul, t_add, mask)
+        h = self.block1(x, t_mul, t_add, mask=mask)
         h = self.block2(h, mask=mask)
-        return h + self.res_conv(x) if x.shape == h.shape else self.res_conv(x, mask=mask)
+        return h + (self.res_conv(x) if x.shape == h.shape else self.res_conv(x, mask=mask))

@@ -15,7 +15,7 @@ from src.utils.Diffusion_Utils import Diffusion_Utils
 
 
 class Model():
-    def __init__(self, device=torch.device("cpu"), use_noise=False):
+    def __init__(self, device=torch.device("cpu"), use_noise=False, use_scheduler=True):
         self.device = device
         self.use_noise = use_noise
         self.sampling_rate = 24_000
@@ -169,9 +169,11 @@ class Model():
                     # be during inference.
                     # The conditional masks are in terms of themselves
                     # as we know their length during inference.
-                    masks_stylized = torch.tensor([x.shape[1] for x in unstylized_audio]).int().to(self.device)
                     if not self.use_noise:
+                        masks_stylized = torch.tensor([x.shape[1] for x in unstylized_audio]).int().to(self.device)
                         masks_unstylized = torch.tensor([x.shape[1] for x in unstylized_audio]).int().to(self.device)
+                    else:
+                        masks_stylized = torch.tensor([x.shape[1] for x in stylized_audio]).int().to(self.device)
                     masks_conditional = torch.tensor([x.shape[1] for x in conditional_audio]).int().to(self.device)
                     
                     # Pad the unstylized audio and conditional audio to the max length
@@ -184,18 +186,22 @@ class Model():
                     # as the unstylized audio. If the unstylized audio is shorter
                     # than the stylized audio, then we need to trim the stylized
                     # audio to the same length as the unstylized audio.
-                    stylized_audio = torch.stack([
-                        torch.nn.functional.pad(a, (0, unstylized_max_length - a.shape[1], 0, 0)) 
-                            if a.shape[1] < unstylized_max_length 
-                            else a[:, :unstylized_max_length] 
-                            for a in stylized_audio
-                    ])
+                    if not self.use_noise:
+                        stylized_audio = torch.stack([
+                            torch.nn.functional.pad(a, (0, unstylized_max_length - a.shape[1], 0, 0)) 
+                                if a.shape[1] < unstylized_max_length 
+                                else a[:, :unstylized_max_length] 
+                                for a in stylized_audio
+                        ])
+                    else:
+                        stylized_audio = torch.stack([torch.nn.functional.pad(a, (0, stylized_max_length - a.shape[1], 0, 0)) for a in stylized_audio])
                         
                     # The max length of the stylized audio is now the same as the
                     # max length of the unstylized audio. The masks should
                     # also be the same as the unstylized audio.
-                    stylized_max_length = unstylized_max_length
-                    masks_stylized = masks_unstylized.clone()
+                    if not self.use_noise:
+                        stylized_max_length = unstylized_max_length
+                        masks_stylized = masks_unstylized.clone()
                     
                     # # Pad all audio to max lengths. Note that
                     # # we pad the
@@ -248,9 +254,8 @@ class Model():
                     # or as a uperposition of the stylized audio and noise depending on
                     # what `self.use_noise` is
                     if self.use_noise:
-                        unstylized = audio_super = torch.randn_like(stylized)
-                    else:
-                        audio_super = self.diffusion_utils.diffuse_data(timesteps, stylized, unstylized)
+                        unstylized = torch.randn_like(stylized)
+                    audio_super = self.diffusion_utils.diffuse_data(timesteps, stylized, unstylized)
                     
                     
                     
@@ -284,7 +289,8 @@ class Model():
                 #     stylized_pred_ = self.model.eval()(audio_super[:1, :, :comb_sum], conditional[:1, :, :cond_sum] if conditional_audio is not None else None, positional_embeddings[:1])
                 #     stylized_pred_ *= self.scale
                     
-                #     diff = ((stylized_pred[0, :, :stylized_pred_.shape[-1]] - stylized_pred_)**2).sum()
+                #     diff = ((stylized_pred[0, :, :stylized_pred_.shape[-1]] - stylized_pred_)**2).mean()
+                #     max_ = ((stylized_pred[0, :, :stylized_pred_.shape[-1]] - stylized_pred_)**2).max()
                 #     print()
                 
                 
@@ -299,7 +305,7 @@ class Model():
                 if self.use_scheduler:
                     scheduler.step()
                 
-                print(f"Epoch: {epoch} | Loss: {loss.item()}")
+                # print(f"Epoch: {epoch} | Loss: {loss.item()}")
                 
                 batch_loss += loss.item()
                 
@@ -310,17 +316,19 @@ class Model():
                 
             print(f"Epoch: {epoch} | Batch Loss: {batch_loss/len(dataloader)}")
             
-            sample_dir = "audio_samples3"
-            checkpoints_dir = "checkpoints5"
+            sample_dir = "audio_samples_cond2_new"
+            checkpoints_dir = "checkpoints_cond2_new"
             
             ## Audio samples
             if not os.path.exists(f"{sample_dir}/epoch_{epoch}"):
                 os.makedirs(f"{sample_dir}/epoch_{epoch}")
             
             # Remvoe zero pad from audio
-            unstylized = unstylized[:1, :, :masks_unstylized[0].sum()]
             if not self.use_noise:
-                conditional = conditional[:1, :, :masks_conditional[0].sum()]
+                unstylized = unstylized[:1, :, :masks_unstylized[0].sum()]
+            else:
+                unstylized = unstylized[:1, :, :masks_stylized[0].sum()]
+            conditional = conditional[:1, :, :masks_conditional[0].sum()]
                 
             # Generate audio prediction by diffusing the unstylized audio to the predicted stylized audio
             stylized_audio_pred = self.diffusion_utils.sample_data(self.model, unstylized, cond=conditional if conditional_audio is not None else None)

@@ -166,18 +166,33 @@ class WavDataset(Dataset):
 
 
 def train():
+    # Data params
     data_path = "audio_stylized_speaker"
-    batch_size = 16
     num_workers = 8
     prefetch_factor = 3
     limit = 50
+    
+    # Model params
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    embed_dim = 256
+    t_embed_dim = 256
+    cond_embed_dim = 128
+    num_blocks = 2
+    blk_types = ["res", "cond2", "res"]
     # device = torch.device("cpu")
     use_noise = False
-    use_scheduler = True
     
-    # checkpoint_path = "checkpoints_cond2_new/epoch_1/"
-    checkpoint_path = None
+    # Training params
+    batch_size = 16
+    lr = 1e-4
+    accumulation_steps = 2
+    use_scheduler = True
+    sample_dir = "audio_samples_cond2_new_new"
+    checkpoints_dir = "checkpoints_cond2_new_new"
+    
+    # Loading params
+    # pretrained_checkpoint_path = "checkpoints_cond2_new_new/epoch_0/"
+    pretrained_checkpoint_path = None
     
     
     
@@ -200,17 +215,25 @@ def train():
     
     
     # Create the main model
-    model = Model(device, use_noise, use_scheduler)
+    model = Model(embed_dim=embed_dim, 
+                  t_embed_dim=t_embed_dim,
+                  cond_embed_dim=cond_embed_dim, 
+                  num_blocks=num_blocks,
+                  blk_types=blk_types,
+                  device=device,
+                  use_noise=use_noise, 
+                  use_scheduler=use_scheduler)
     
     # Load in the checkpoint
-    if checkpoint_path:
-        model.load_checkpoint(checkpoint_path)
+    optimizer_checkpoint = None
+    if pretrained_checkpoint_path:
+        optimizer_checkpoint = model.load_checkpoint(pretrained_checkpoint_path)
     
     
     
     
     # Train the model
-    model.train(dataloader)
+    model.train(dataloader, lr=lr, accumulation_steps=accumulation_steps, sample_dir=sample_dir, checkpoints_dir=checkpoints_dir, optimizer_checkpoint=optimizer_checkpoint)
     
     
     

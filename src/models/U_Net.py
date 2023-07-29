@@ -82,7 +82,7 @@ class U_Net(nn.Module):
         for i in range(num_blocks, -1, -1):
             if i == 0:
                 blocks.append(unetBlock(embCh*(2**(chMult*i)), embCh*(2**(chMult*i)), blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
-                blocks.append(unetBlock(embCh*(2**(chMult*i)), outCh, blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
+                blocks.append(unetBlock(embCh*(2**(chMult*i)), embCh, blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
             else:
                 blocks.append(WeightStandardizedConvTranspose1d(embCh*(2**(chMult*(i))), embCh*(2**(chMult*(i))), kernel_size=4, stride=2, padding=1))
                 blocks.append(unetBlock(2*embCh*(2**(chMult*i)), embCh*(2**(chMult*(i-1))), blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
@@ -91,7 +91,10 @@ class U_Net(nn.Module):
         )
         
         # Final output block
-        self.out = WeightStandardizedConv1d(outCh, outCh, 7, padding=3)
+        self.out = nn.Sequential(
+            nn.SiLU(),
+            WeightStandardizedConv1d(embCh, outCh, 3, padding=1)
+        )
 
         # Down/up sample blocks
         self.downSamp = nn.AvgPool1d(2) 
@@ -101,7 +104,7 @@ class U_Net(nn.Module):
         if t_dim is not None:
             self.t_emb = nn.Sequential(
                     nn.Linear(t_dim, t_dim),
-                    nn.GELU(),
+                    nn.SiLU(),
                     nn.Linear(t_dim, t_dim),
                 )
     
@@ -197,4 +200,4 @@ class U_Net(nn.Module):
         
         # Send the output through the final block
         # and return the output
-        return self.out(X, masks)
+        return self.out[1](self.out[0](X) * masks, masks) if type(masks) == torch.Tensor else self.out(X) 

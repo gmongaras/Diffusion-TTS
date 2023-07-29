@@ -13,7 +13,6 @@ class SinusoidalPositionEmbeddings(nn.Module):
         self.half_dim = self.dim // 2
         self.embeddings = math.log(10000) / (self.half_dim - 1)
         self.embeddings = torch.exp(torch.arange(self.half_dim) * -self.embeddings)
-        print()
 
     def forward(self, time):
         embeddings = time[:, None] * self.embeddings[None, :].to(time.device)

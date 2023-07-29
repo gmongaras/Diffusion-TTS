@@ -15,12 +15,15 @@ from src.utils.Diffusion_Utils import Diffusion_Utils
 
 
 class Model():
-    def __init__(self, device=torch.device("cpu"), use_noise=False, use_scheduler=True):
+    def __init__(self, embed_dim=128, t_embed_dim=128, cond_embed_dim=128, num_blocks=2, blk_types=["res", "cond2", "res"], device=torch.device("cpu"), use_noise=False, use_scheduler=True):
         self.device = device
         self.use_noise = use_noise
         self.sampling_rate = 24_000
         self.scale = 10
         self.use_scheduler = False
+        
+        self.embed_dim = embed_dim
+        self.t_embed_dim = t_embed_dim
         
         
         ### Encodec
@@ -39,9 +42,7 @@ class Model():
         
         # Model to train
         # self.model = Transformer(128, 128, 512, 8).to(self.device)
-        embed_dim = 152
-        t_embed_dim = 128
-        self.model = U_Net(128, 128, embed_dim, 1, num_blocks=2, blk_types=["res", "cond2", "res"], cond_dim=128, t_dim=t_embed_dim).to(self.device)
+        self.model = U_Net(128, 128, embed_dim, 1, num_blocks=num_blocks, blk_types=blk_types, cond_dim=cond_embed_dim, t_dim=t_embed_dim).to(self.device)
         
         # Diffusion model utility class
         self.diffusion_utils = Diffusion_Utils(t_embed_dim)
@@ -97,9 +98,9 @@ class Model():
     
     
     
-    def train(self, dataloader):
+    def train(self, dataloader, lr=1e-3, sample_dir="audio_samples", checkpoints_dir="checkpoints", accumulation_steps=1, optimizer_checkpoint=None):
         # Optimzer
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-3)
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr) if optimizer_checkpoint is None else optimizer_checkpoint
         
         # Loss function
         loss_fn = torch.nn.MSELoss()
@@ -143,6 +144,7 @@ class Model():
         
         
         
+        num_steps = 0
         for epoch in range(0, 10000):
             # Total batch loss
             batch_loss = 0
@@ -299,25 +301,30 @@ class Model():
                 loss = loss_fn(stylized, stylized_pred)
                 
                 # Backward pass
-                optimizer.zero_grad()
                 loss.backward()
-                optimizer.step(lambda : epoch + batch_num / len(dataloader))
-                if self.use_scheduler:
-                    scheduler.step()
+                   
+                # Update model every accumulation_steps 
+                if num_steps % accumulation_steps == 0:
+                    optimizer.step()
+                    if self.use_scheduler:
+                        scheduler.step(lambda : epoch + batch_num / len(dataloader))
+                    optimizer.zero_grad()
                 
-                # print(f"Epoch: {epoch} | Loss: {loss.item()}")
+                if epoch == 0:
+                    print(f"Epoch: {epoch} | Loss: {loss.item()}")
                 
                 batch_loss += loss.item()
                 
                 # Free memory except on last batch
                 if batch_num != len(dataloader)-1:
-                    del stylized, unstylized, conditional, masks_stylized, masks_unstylized, masks_conditional, stylized_pred, audio_super, positional_embeddings, timesteps
+                    del stylized, unstylized, conditional, masks_stylized, masks_conditional, stylized_pred, audio_super, positional_embeddings, timesteps
+                    if not self.use_noise:
+                        del masks_unstylized
                     torch.cuda.empty_cache()
+                    
+                num_steps += 1
                 
             print(f"Epoch: {epoch} | Batch Loss: {batch_loss/len(dataloader)}")
-            
-            sample_dir = "audio_samples_cond2_new"
-            checkpoints_dir = "checkpoints_cond2_new"
             
             ## Audio samples
             if not os.path.exists(f"{sample_dir}/epoch_{epoch}"):

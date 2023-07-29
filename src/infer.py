@@ -6,7 +6,7 @@ from src.Model import Model
 
 
 def infer():
-    checkpoint_path = "checkpoints_cond2_new/epoch_10/"
+    checkpoint_path = "checkpoints_cond2_new_new/step_1000/"
     text = "I agree with you, but I hate you!"
     condition_paths = ["audio_stylized_speaker/29/1.wav", "audio_stylized_speaker/29/2.wav"]
     num_steps = 100
@@ -17,7 +17,7 @@ def infer():
     
     
     # Load in the model
-    model = Model(device)
+    model = Model(embed_dim=256, t_embed_dim=256, device=device)
     
     # Load in the checkpoint
     optimizer_checkpoint = model.load_checkpoint(checkpoint_path)

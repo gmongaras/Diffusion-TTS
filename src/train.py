@@ -162,7 +162,8 @@ class WavDataset(Dataset):
 
 
 
-
+def collate_fn(batch):
+    return batch
 
 
 def train():
@@ -185,6 +186,7 @@ def train():
     # Training params
     batch_size = 16
     lr = 1e-4
+    save_every_steps = 1000
     accumulation_steps = 2
     use_scheduler = True
     sample_dir = "audio_samples_cond2_new_new"
@@ -205,10 +207,12 @@ def train():
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
                             shuffle=True,  
-                            collate_fn=lambda x: x,
+                            # collate_fn=lambda x: x,
+                            collate_fn=collate_fn,
                             num_workers=num_workers if num_workers > 0 else 0,
                             prefetch_factor=prefetch_factor if num_workers > 0 else None,
-                            persistent_workers=True if num_workers > 0 else False
+                            persistent_workers=True,
+                            # pin_memory=True,
     )
     
     
@@ -233,7 +237,7 @@ def train():
     
     
     # Train the model
-    model.train(dataloader, lr=lr, accumulation_steps=accumulation_steps, sample_dir=sample_dir, checkpoints_dir=checkpoints_dir, optimizer_checkpoint=optimizer_checkpoint)
+    model.train_model(dataloader, lr=lr, save_every_steps=save_every_steps, accumulation_steps=accumulation_steps, sample_dir=sample_dir, checkpoints_dir=checkpoints_dir, optimizer_checkpoint=optimizer_checkpoint)
     
     
     

@@ -14,8 +14,10 @@ from src.utils.Diffusion_Utils import Diffusion_Utils
 
 
 
-class Model():
+class Model(nn.Module):
     def __init__(self, embed_dim=128, t_embed_dim=128, cond_embed_dim=128, num_blocks=2, blk_types=["res", "cond2", "res"], device=torch.device("cpu"), use_noise=False, use_scheduler=True):
+        super(Model, self).__init__()
+        
         self.device = device
         self.use_noise = use_noise
         self.sampling_rate = 24_000
@@ -98,9 +100,11 @@ class Model():
     
     
     
-    def train(self, dataloader, lr=1e-3, sample_dir="audio_samples", checkpoints_dir="checkpoints", accumulation_steps=1, optimizer_checkpoint=None):
+    def train_model(self, dataloader, lr=1e-3, save_every_steps=1000, sample_dir="audio_samples", checkpoints_dir="checkpoints", accumulation_steps=1, optimizer_checkpoint=None):
+        self.train()
+        
         # Optimzer
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr) if optimizer_checkpoint is None else optimizer_checkpoint
+        optimizer = torch.optim.AdamW(self.parameters(), lr=lr) if optimizer_checkpoint is None else optimizer_checkpoint
         
         # Loss function
         loss_fn = torch.nn.MSELoss()
@@ -311,56 +315,73 @@ class Model():
                     optimizer.zero_grad()
                 
                 if epoch == 0:
-                    print(f"Epoch: {epoch} | Loss: {loss.item()}")
+                    print(f"Step: {num_steps} | Loss: {loss.item()}")
                 
                 batch_loss += loss.item()
-                
-                # Free memory except on last batch
-                if batch_num != len(dataloader)-1:
-                    del stylized, unstylized, conditional, masks_stylized, masks_conditional, stylized_pred, audio_super, positional_embeddings, timesteps
-                    if not self.use_noise:
-                        del masks_unstylized
-                    torch.cuda.empty_cache()
-                    
                 num_steps += 1
                 
-            print(f"Epoch: {epoch} | Batch Loss: {batch_loss/len(dataloader)}")
-            
-            ## Audio samples
-            if not os.path.exists(f"{sample_dir}/epoch_{epoch}"):
-                os.makedirs(f"{sample_dir}/epoch_{epoch}")
-            
-            # Remvoe zero pad from audio
-            if not self.use_noise:
-                unstylized = unstylized[:1, :, :masks_unstylized[0].sum()]
-            else:
-                unstylized = unstylized[:1, :, :masks_stylized[0].sum()]
-            conditional = conditional[:1, :, :masks_conditional[0].sum()]
                 
-            # Generate audio prediction by diffusing the unstylized audio to the predicted stylized audio
-            stylized_audio_pred = self.diffusion_utils.sample_data(self.model, unstylized, cond=conditional if conditional_audio is not None else None)
-            stylized_audio_pred *= self.scale
-            # Save audio samples
-            torchaudio.save(f"{sample_dir}/epoch_{epoch}/stylized.wav", stylized_audio[0].cpu(), 24000)
-            if not self.use_noise:
-                torchaudio.save(f"{sample_dir}/epoch_{epoch}/unstylized.wav", unstylized_audio[0].cpu(), 24000)
-            torchaudio.save(f"{sample_dir}/epoch_{epoch}/unstylized_recon.wav", self.encodec_model.decoder(stylized_audio_pred.to(self.device))[0].cpu(), 24000)
-            
-            # Save model checkpoints
-            if not os.path.exists(f"{checkpoints_dir}/epoch_{epoch}"):
-                os.makedirs(f"{checkpoints_dir}/epoch_{epoch}")
-            torch.save(self.model.state_dict(), f"{checkpoints_dir}/epoch_{epoch}/model.pth")
-            
-            # Save optimizer checkpoints
-            if not os.path.exists(f"{checkpoints_dir}/epoch_{epoch}"):
-                os.makedirs(f"{checkpoints_dir}/epoch_{epoch}")
-            torch.save(optimizer.state_dict(), f"{checkpoints_dir}/epoch_{epoch}/optimizer.pth")
-            
-            # Save scheduler checkpoints
-            if self.use_scheduler:
-                if not os.path.exists(f"{checkpoints_dir}/epoch_{epoch}"):
-                    os.makedirs(f"{checkpoints_dir}/epoch_{epoch}")
-                torch.save(scheduler.state_dict(), f"{checkpoints_dir}/epoch_{epoch}/scheduler.pth")
+                
+                
+                
+                
+                
+                # Save audio samples
+                if num_steps % save_every_steps == 0:
+                    with torch.no_grad():
+                        ## Audio samples
+                        if not os.path.exists(f"{sample_dir}/step_{num_steps}"):
+                            os.makedirs(f"{sample_dir}/step_{num_steps}")
+                        
+                        # Remvoe zero pad from audio
+                        if not self.use_noise:
+                            unstylized = unstylized[:1, :, :masks_unstylized[0].sum()]
+                        else:
+                            unstylized = unstylized[:1, :, :masks_stylized[0].sum()]
+                        conditional = conditional[:1, :, :masks_conditional[0].sum()]
+                            
+                        # Generate audio prediction by diffusing the unstylized audio to the predicted stylized audio
+                        stylized_audio_pred = self.diffusion_utils.sample_data(self.model, unstylized, cond=conditional if conditional_audio is not None else None)
+                        stylized_audio_pred *= self.scale
+                        # Save audio samples
+                        torchaudio.save(f"{sample_dir}/step_{num_steps}/stylized.wav", stylized_audio[0].cpu(), 24000)
+                        if not self.use_noise:
+                            torchaudio.save(f"{sample_dir}/step_{num_steps}/unstylized.wav", unstylized_audio[0].cpu(), 24000)
+                        torchaudio.save(f"{sample_dir}/step_{num_steps}/unstylized_recon.wav", self.encodec_model.decoder(stylized_audio_pred.to(self.device))[0].cpu(), 24000)
+                        
+                        # Save model checkpoints
+                        if not os.path.exists(f"{checkpoints_dir}/step_{num_steps}"):
+                            os.makedirs(f"{checkpoints_dir}/step_{num_steps}")
+                        torch.save(self.state_dict(), f"{checkpoints_dir}/step_{num_steps}/model.pth")
+                        
+                        # Save optimizer checkpoints
+                        if not os.path.exists(f"{checkpoints_dir}/step_{num_steps}"):
+                            os.makedirs(f"{checkpoints_dir}/step_{num_steps}")
+                        torch.save(optimizer.state_dict(), f"{checkpoints_dir}/step_{num_steps}/optimizer.pth")
+                        
+                        # Save scheduler checkpoints
+                        if self.use_scheduler:
+                            if not os.path.exists(f"{checkpoints_dir}/step_{num_steps}"):
+                                os.makedirs(f"{checkpoints_dir}/step_{num_steps}")
+                            torch.save(scheduler.state_dict(), f"{checkpoints_dir}/step_{num_steps}/scheduler.pth")
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                # # Free memory except on last batch
+                # if batch_num != len(dataloader)-1:
+                del stylized, unstylized, conditional, masks_stylized, masks_conditional, stylized_pred, audio_super, positional_embeddings, timesteps
+                if not self.use_noise:
+                    del masks_unstylized
+                torch.cuda.empty_cache()
+                
+            print(f"Epoch: {epoch} | Batch Loss: {batch_loss/len(dataloader)}")
             
             
             
@@ -408,11 +429,11 @@ class Model():
     # Used to load in checkpoints
     def load_checkpoint(self, path):
         # Load in the model
-        self.model.load_state_dict(torch.load(path + "/model.pth", map_location=self.device))
-        self.model.eval()
+        self.load_state_dict(torch.load(path + "/model.pth", map_location=self.device))
+        self.eval()
         
         # Load in the optimizer
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-4)
         optimizer.load_state_dict(torch.load(path + "/optimizer.pth", map_location=self.device))
         
         return optimizer

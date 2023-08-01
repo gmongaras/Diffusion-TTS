@@ -302,7 +302,11 @@ class Model(nn.Module):
                 
                 # Compute loss
                 # We want the model to predict the stylized audio
-                loss = loss_fn(stylized, stylized_pred)
+                # Note that we also need to account for the masked terms so
+                # the average doesn't get thrown off. With the mask, the
+                # average will be a lot lower for shorter sequences.
+                # loss = loss_fn(stylized, stylized_pred)
+                loss = (((stylized-stylized_pred)**2).flatten(1, -1).sum(1)/(masks_stylized.squeeze(1).sum(1)*stylized.shape[1])).mean()
                 
                 # Backward pass
                 loss.backward()
@@ -329,6 +333,8 @@ class Model(nn.Module):
                 # Save audio samples
                 if num_steps % save_every_steps == 0:
                     with torch.no_grad():
+                        print(f"Step: {num_steps} | Loss: {batch_loss / num_steps}")
+                        
                         ## Audio samples
                         if not os.path.exists(f"{sample_dir}/step_{num_steps}"):
                             os.makedirs(f"{sample_dir}/step_{num_steps}")
@@ -395,21 +401,25 @@ class Model(nn.Module):
             unstylized = torch.tensor(self.tts.tts(text)).float()
         except RuntimeError:
             unstylized = torch.tensor(self.tts.tts(text + "...")).float()
+            
+        # Resample generated audio to 24000 Hz
+        unstylized = torchaudio.transforms.Resample(22050, 24000)(unstylized)
         
         # Load in the conditional audio
         conditionals = [torchaudio.load(path) for path in conditionals]
-        conditionals = [torchaudio.transforms.Resample(c[1], 24000)(c[0]) for c in conditionals]
+        conditionals = torch.cat([torchaudio.transforms.Resample(c[1], 24000)(c[0]) for c in conditionals], dim=1)
         
         # Pass the data through the encodec
         unstylized, _ = self.process_data(unstylized.unsqueeze(0))
-        conditionals = [self.process_data(c)[0] for c in conditionals]
+        # conditionals = [self.process_data(c)[0] for c in conditionals]
+        conditionals, _ = self.process_data(conditionals)
         
         # Pad the unstylized audio to the nearest second
         # Note: 75 is a second in the latent dimension
-        unstylized = torch.nn.functional.pad(unstylized, (0, 75 - unstylized.shape[2]%75, 0, 0))
+        # unstylized = torch.nn.functional.pad(unstylized, (0, 75 - unstylized.shape[2]%75, 0, 0))
         
         # Concatenate the conditional audio along the time dimension
-        conditionals = torch.cat(conditionals, dim=2)
+        # conditionals = torch.cat(conditionals, dim=2)
         
         # Permute audio to be of shape (N, E, T)
         unstylized = unstylized.to(self.device) / self.scale

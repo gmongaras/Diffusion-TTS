@@ -109,17 +109,17 @@ class Diffusion_Utils:
             # Take Cold Diffusion step on the predicted x_0 posterior
             x_t = self.take_cold_diffusion_step(x_t, x_0_pred, t, t_next)
             
-        ### Final prediction
-        step = num_steps
+        # ### Final prediction
+        # step = num_steps
         
-        # Convert timestep between 0 and 1
-        # and start at 1 instead of 0. Then
-        # get the next timestep.
-        step = torch.tensor(step).to(x_1.device).repeat(x_1.shape[0], 1, 1)
-        t = 1-(step/num_steps)
+        # # Convert timestep between 0 and 1
+        # # and start at 1 instead of 0. Then
+        # # get the next timestep.
+        # step = torch.tensor(step).to(x_1.device).repeat(x_1.shape[0], 1, 1)
+        # t = 1-(step/num_steps)
         
-        # Predict the original x_1 (prior)
-        positional_encodings = self.t_to_positional_embeddings(t.squeeze(1, -1))
-        x_0_pred = model(x_t, cond, positional_encodings)
+        # # Predict the original x_1 (prior)
+        # positional_encodings = self.t_to_positional_embeddings(t.squeeze(1, -1))
+        # x_0_pred = model(x_t, cond, positional_encodings)
         
         return x_0_pred

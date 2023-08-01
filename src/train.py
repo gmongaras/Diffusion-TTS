@@ -40,12 +40,12 @@ class WavDataset(Dataset):
                     
                     if not speaker in self.speaker_map:
                         self.speaker_map[speaker] = []
-                        
-                    # Speaker to index in data
-                    self.speaker_map[speaker].append(self.total)
                     
                     # Data index to speaker and index in speaker
                     self.reverse_idx.append((speaker, len(self.speaker_map[speaker])))
+                    
+                    # Speaker to index in data
+                    self.speaker_map[speaker].append(self.total)
                     
                     # Add data to list
                     self.data.append((
@@ -61,9 +61,11 @@ class WavDataset(Dataset):
             
             
         # Load in the TTS model
-        model_name = 'tts_models/en/ljspeech/speedy-speech'
-        self.tts_sr = 22050
+        # model_name = 'tts_models/en/ljspeech/speedy-speech'
+        # self.tts_sr = 22050
+        model_name = 'tts_models/en/ljspeech/glow-tts'
         self.tts = TTS(model_name, gpu=False)
+        self.tts_sr = self.tts.synthesizer.output_sample_rate
         
         
         # Transcribe the text using TTS
@@ -76,14 +78,13 @@ class WavDataset(Dataset):
     
     @torch.no_grad()
     def load_item(self, idx, only_wav=False):
-        # Get the speaker and index in speaker
-        speaker, idx = self.reverse_idx[idx]
-        
         # Get the data entry
         data = self.data[idx]
         
         # Get the waveform and sample rate from memory
         if self.load_in_memory:
+            raise NotImplementedError
+            
             waveform, sample_rate = data[0]
             
             if only_wav:
@@ -93,6 +94,10 @@ class WavDataset(Dataset):
             waveform_unstylized, sample_rate_unstylized = (data[2], self.tts_sr)
         else:
             waveform, sample_rate = torchaudio.load(data[0])
+            
+            # Resample
+            if sample_rate != 24000:
+                waveform = torchaudio.transforms.Resample(sample_rate, 24000)(waveform)
             
             if only_wav:
                 return waveform
@@ -107,8 +112,6 @@ class WavDataset(Dataset):
                 waveform_unstylized, sample_rate_unstylized = (torch.tensor(self.tts.tts(text)).float().unsqueeze(0), self.tts_sr)
         
         # Resample audio to 24000 Hz
-        if sample_rate != 24000:
-            waveform = torchaudio.transforms.Resample(sample_rate, 24000)(waveform)
         waveform_unstylized = torchaudio.transforms.Resample(sample_rate_unstylized, 24000)(waveform_unstylized)
         
         return waveform, waveform_unstylized, text
@@ -120,7 +123,7 @@ class WavDataset(Dataset):
         waveform, waveform_unstylized, text = self.load_item(idx)
         
         # Get the speaker and index in speaker
-        speaker, _ = self.reverse_idx[idx]
+        speaker, speaker_idx = self.reverse_idx[idx]
         
         # Get another random data entry from the same speaker, but
         # with a different index value.
@@ -169,9 +172,9 @@ def collate_fn(batch):
 def train():
     # Data params
     data_path = "audio_stylized_speaker"
-    num_workers = 8
-    prefetch_factor = 3
-    limit = 50
+    num_workers = 7#8
+    prefetch_factor = 4
+    limit = 200
     
     # Model params
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -191,9 +194,11 @@ def train():
     use_scheduler = True
     sample_dir = "audio_samples_cond2_new_new"
     checkpoints_dir = "checkpoints_cond2_new_new"
+    # sample_dir = "del_"
+    # checkpoints_dir = "del_"
     
     # Loading params
-    # pretrained_checkpoint_path = "checkpoints_cond2_new_new/epoch_0/"
+    # pretrained_checkpoint_path = "checkpoints_cond2_new_new/step_11000/"
     pretrained_checkpoint_path = None
     
     
@@ -211,7 +216,7 @@ def train():
                             collate_fn=collate_fn,
                             num_workers=num_workers if num_workers > 0 else 0,
                             prefetch_factor=prefetch_factor if num_workers > 0 else None,
-                            persistent_workers=True,
+                            persistent_workers=True if num_workers > 0 else False,
                             # pin_memory=True,
     )
     

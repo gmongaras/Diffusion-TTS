@@ -54,7 +54,7 @@ class U_Net(nn.Module):
         blocks = []
         curCh = embCh
         for i in range(1, num_blocks+1):
-            blocks.append(unetBlock(curCh, embCh*(2**(chMult*i)), blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
+            blocks.append(unetBlock(curCh, embCh*(2**(chMult*i)), blk_types[i-1], cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
             if i != num_blocks+1:
                 blocks.append(WeightStandardizedConv1d(embCh*(2**(chMult*i)), embCh*(2**(chMult*i)), kernel_size=3, stride=2, padding=1))
             curCh = embCh*(2**(chMult*i))
@@ -69,10 +69,10 @@ class U_Net(nn.Module):
         intermediateCh = curCh
         self.intermediate = nn.Sequential(
             # convNext(intermediateCh, intermediateCh, t_dim, dropoutRate=dropoutRate),
-            unetBlock(intermediateCh, intermediateCh, blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution),
+            unetBlock(intermediateCh, intermediateCh, ["res", "atn", "res"], cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution),
             # Efficient_Channel_Attention(intermediateCh),
             # convNext(intermediateCh, intermediateCh, t_dim, dropoutRate=dropoutRate)
-            unetBlock(intermediateCh, intermediateCh, blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution),
+            # unetBlock(intermediateCh, intermediateCh, blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution),
         )
         
         
@@ -81,11 +81,11 @@ class U_Net(nn.Module):
         blocks = []
         for i in range(num_blocks, -1, -1):
             if i == 0:
-                blocks.append(unetBlock(embCh*(2**(chMult*i)), embCh*(2**(chMult*i)), blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
-                blocks.append(unetBlock(embCh*(2**(chMult*i)), embCh, blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
+                # blocks.append(unetBlock(embCh*(2**(chMult*i)), embCh*(2**(chMult*i)), blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
+                blocks.append(unetBlock(embCh*(2**(chMult*i)), embCh, ["res"], cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
             else:
                 blocks.append(WeightStandardizedConvTranspose1d(embCh*(2**(chMult*(i))), embCh*(2**(chMult*(i))), kernel_size=4, stride=2, padding=1))
-                blocks.append(unetBlock(2*embCh*(2**(chMult*i)), embCh*(2**(chMult*(i-1))), blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
+                blocks.append(unetBlock(2*embCh*(2**(chMult*i)), embCh*(2**(chMult*(i-1))), blk_types[-min(num_blocks-i+2, num_blocks)], cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
         self.upBlocks = nn.Sequential(
             *blocks
         )

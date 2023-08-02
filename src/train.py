@@ -181,16 +181,21 @@ def train():
     embed_dim = 256
     t_embed_dim = 256
     cond_embed_dim = 128
-    num_blocks = 2
-    blk_types = ["res", "cond2", "res"]
+    num_blocks = 3
+    blk_types = [
+        ["res", "cond2"],
+        ["res", "atn", "cond2"],
+        ["res", "atn", "cond2"],
+    ]
     # device = torch.device("cpu")
     use_noise = False
+    noise_scheduler_type = "cosine"
     
     # Training params
     batch_size = 16
     lr = 1e-4
     save_every_steps = 1000
-    accumulation_steps = 2
+    accumulation_steps = 3
     use_scheduler = True
     sample_dir = "audio_samples_cond2_new_new"
     checkpoints_dir = "checkpoints_cond2_new_new"
@@ -198,7 +203,7 @@ def train():
     # checkpoints_dir = "del_"
     
     # Loading params
-    # pretrained_checkpoint_path = "checkpoints_cond2_new_new/step_11000/"
+    # pretrained_checkpoint_path = "checkpoints_cond2_new_new/step_34000/"
     pretrained_checkpoint_path = None
     
     
@@ -229,6 +234,7 @@ def train():
                   cond_embed_dim=cond_embed_dim, 
                   num_blocks=num_blocks,
                   blk_types=blk_types,
+                  noise_scheduler_type=noise_scheduler_type,
                   device=device,
                   use_noise=use_noise, 
                   use_scheduler=use_scheduler)

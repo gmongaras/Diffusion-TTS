@@ -11,7 +11,7 @@ def infer():
     condition_paths = ["audio_stylized_speaker/45/1.wav", "audio_stylized_speaker/45/2.wav"]
     num_steps = 100
     outfile = "output.wav"
-    device = torch.device("cuda:0")
+    device = torch.device("cpu")
     # device = torch.device("cpu")
     
     
@@ -20,7 +20,7 @@ def infer():
     model = Model(embed_dim=256, t_embed_dim=256, device=device)
     
     # Load in the checkpoint
-    optimizer_checkpoint = model.load_checkpoint(checkpoint_path)
+    # optimizer_checkpoint = model.load_checkpoint(checkpoint_path)
     
     # Run model inference
     output = model.infer(text, condition_paths, num_steps=num_steps)

@@ -2,19 +2,43 @@ import torch
 from src.utils.SinusoidalPositionEmbeddings import SinusoidalPositionEmbeddings
 from tqdm import tqdm
 from copy import deepcopy
+import math
 
 
 
 # Schedulers from here: https://arxiv.org/pdf/2301.10972.pdf
-def linear_scheduler(t, clip_min=1e-9):
+def linear_schedule(t, clip_min=1e-9):
     return torch.clamp(1.0 - t, clip_min, 1.0)
+def sigmoid_schedule(t, start=-3, end=3, tau=1.0, clip_min=1e-9):
+    # A gamma function based on sigmoid function.
+    v_start = torch.sigmoid(start / tau)
+    v_end = torch.sigmoid(end / tau)
+    output = torch.sigmoid((t * (end - start) + start) / tau)
+    output = (v_end - output) / (v_end - v_start)
+    return torch.clamp(output, clip_min, 1.)
+def cosine_schedule(t, start=0, end=1, tau=1, clip_min=1e-9):
+    # A gamma function based on cosine function.
+    v_start = math.cos(start * math.pi / 2) ** (2 * tau)
+    v_end = math.cos(end * math.pi / 2) ** (2 * tau)
+    output = torch.cos((t * (end - start) + start) * math.pi / 2) ** (2 * tau)
+    output = (v_end - output) / (v_end - v_start)
+    return torch.clamp(output, clip_min, 1.)
 
 
 
 
 class Diffusion_Utils:
-    def __init__(self, embedding_dimension):
+    def __init__(self, embedding_dimension, scheduler_type="linear"):
         self.positional_embeddings = SinusoidalPositionEmbeddings(embedding_dimension)
+        
+        if scheduler_type == "linear":
+            self.scheduler = linear_schedule
+        elif scheduler_type == "sigmoid":
+            self.scheduler = sigmoid_schedule
+        elif scheduler_type == "cosine":
+            self.scheduler = cosine_schedule
+        else:
+            raise ValueError("Scheduler type not recognized")
         
         
         
@@ -41,7 +65,7 @@ class Diffusion_Utils:
     # NOTE: The forward noising equation is x_t = sqrt(gammas)*x_0 + sqrt(1-gammas)*x_1
     def diffuse_data(self, t, x_0, x_1):
         # Compute the gamma values for each timestep
-        gammas = linear_scheduler(t).reshape(-1, 1, 1)
+        gammas = self.scheduler(t).reshape(-1, 1, 1)
         
         # Compute the diffusion images
         return torch.sqrt(gammas) * x_0 + torch.sqrt(1 - gammas) * x_1
@@ -51,8 +75,8 @@ class Diffusion_Utils:
     # take a DDIM step to get the next timestep
     def take_ddim_step(self, x_t, x_1_pred, t_now, t_next, clamp=False):
         # Compute the gamma values for the timesteps
-        gammas = linear_scheduler(t_now).reshape(-1, 1, 1)
-        gammas_next = linear_scheduler(t_next).reshape(-1, 1, 1)
+        gammas = self.scheduler(t_now).reshape(-1, 1, 1)
+        gammas_next = self.scheduler(t_next).reshape(-1, 1, 1)
         
         # DDIM without noise component
         if clamp:
@@ -64,8 +88,8 @@ class Diffusion_Utils:
             
     def take_cold_diffusion_step(self, x_t, x_0_pred, t_now, t_next):
         # Compute the gamma values for the timesteps
-        gammas = linear_scheduler(t_now).reshape(-1, 1, 1)
-        gammas_next = linear_scheduler(t_next).reshape(-1, 1, 1)
+        gammas = self.scheduler(t_now).reshape(-1, 1, 1)
+        gammas_next = self.scheduler(t_next).reshape(-1, 1, 1)
         
         # Get the prediction for x_0 (posterior) and x_1 (prior)
         x_0_hat = x_0_pred

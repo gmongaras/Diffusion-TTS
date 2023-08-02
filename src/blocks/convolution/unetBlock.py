@@ -3,7 +3,7 @@ from .convNext import convNext
 from .Efficient_Channel_Attention import Efficient_Channel_Attention
 from .clsAttn import clsAttn, clsAttn_Linear, Efficient_Cls_Attention
 from .wideResNet import ResnetBlock
-from .Multihead_Attn import Multihead_Attn
+from .MultiHeadAttention import MultiHeadAttention
 from .ConditionalBlock import ConditionalBlock
 from .ConditionalBlock2 import ConditionalBlock2
 
@@ -12,15 +12,15 @@ from .ConditionalBlock2 import ConditionalBlock2
 
 
 
-# Map from string form of a block to object form
-str_to_blk = dict(
-    res=ResnetBlock,
-    cond=ConditionalBlock,
-    conv=convNext,
-    clsAtn=clsAttn,
-    chnAtn=Efficient_Channel_Attention,
-    atn=Multihead_Attn,
-)
+# # Map from string form of a block to object form
+# str_to_blk = dict(
+#     res=ResnetBlock,
+#     cond=ConditionalBlock,
+#     conv=convNext,
+#     clsAtn=clsAttn,
+#     chnAtn=Efficient_Channel_Attention,
+#     atn=Multihead_Attn,
+# )
 
 
 
@@ -52,6 +52,8 @@ class unetBlock(nn.Module):
                 blocks.append(ConditionalBlock(cond_dim, curCh))
             if blk == "cond2":
                 blocks.append(ConditionalBlock2(cond_dim, curCh))
+            if blk == "atn":
+                blocks.append(MultiHeadAttention(curCh, 8))
 
             curCh = curCh1
 
@@ -77,6 +79,9 @@ class unetBlock(nn.Module):
                 X = b(X, t, mask)
             elif type(b) == ConditionalBlock or type(b) == ConditionalBlock2:
                 X = b(X, y, mask, mask_cond)
+            elif type(b) == MultiHeadAttention:
+                X = b(X, X, X, mask, mask, mask)
+                # X = b(X.transpose(-1, -2), X.transpose(-1, -2), X.transpose(-1, -2))[0].transpose(-1, -2) 
             else:
-                X = b(X) 
+                X = b(X)
         return X

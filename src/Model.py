@@ -15,7 +15,7 @@ from src.utils.Diffusion_Utils import Diffusion_Utils
 
 
 class Model(nn.Module):
-    def __init__(self, embed_dim=128, t_embed_dim=128, cond_embed_dim=128, num_blocks=2, blk_types=["res", "cond2", "res"], device=torch.device("cpu"), use_noise=False, use_scheduler=True):
+    def __init__(self, embed_dim=128, t_embed_dim=128, cond_embed_dim=128, num_blocks=2, blk_types=["res", "cond2", "res"], noise_scheduler_type="linear", device=torch.device("cpu"), use_noise=False, use_scheduler=True):
         super(Model, self).__init__()
         
         self.device = device
@@ -44,10 +44,13 @@ class Model(nn.Module):
         
         # Model to train
         # self.model = Transformer(128, 128, 512, 8).to(self.device)
+        if type(blk_types[0]) == str:
+            blk_types = [blk_types for _ in range(num_blocks)]
+        assert len(blk_types) == num_blocks, "blk_types must be the same length as num_blocks"
         self.model = U_Net(128, 128, embed_dim, 1, num_blocks=num_blocks, blk_types=blk_types, cond_dim=cond_embed_dim, t_dim=t_embed_dim).to(self.device)
         
         # Diffusion model utility class
-        self.diffusion_utils = Diffusion_Utils(t_embed_dim)
+        self.diffusion_utils = Diffusion_Utils(t_embed_dim, scheduler_type=noise_scheduler_type)
         
         # Paramater counts
         print("U-Net model has {} parameters".format(sum(p.numel() for p in self.model.parameters() if p.requires_grad)))
@@ -111,7 +114,7 @@ class Model(nn.Module):
         
         # Cosine annealing scheduler with warm restarts
         if self.use_scheduler:
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1, eta_min=1e-6)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=1e-6)
         
         
         

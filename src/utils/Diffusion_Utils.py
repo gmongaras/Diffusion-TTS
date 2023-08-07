@@ -112,7 +112,7 @@ class Diffusion_Utils:
     # Given a batch of data at timestep 1 (prior), diffuse
     # the data from timestep 1 to timestep 0 (posterior)
     @torch.no_grad()
-    def sample_data(self, model, x_1, num_steps=100, cond=None):
+    def sample_data(self, model, x_1, num_steps=100, cond=None, context=None):
         # Iterate over all steps
         x_t = x_1
         for step in tqdm(range(0, num_steps)):
@@ -125,7 +125,7 @@ class Diffusion_Utils:
             
             # Predict the human speech x_0 (posterior)
             positional_encodings = self.t_to_positional_embeddings(t.squeeze(1, -1))
-            x_0_pred = model(x_t, cond, positional_encodings)
+            x_0_pred = model(x_t/1, cond, positional_encodings, context)*1
             
             # Take DDIM step on the predicted x_1 prior
             # x_t = self.take_ddim_step(x_t, x_1_pred, t, t_next, step==0)

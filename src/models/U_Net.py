@@ -39,9 +39,10 @@ class U_Net(nn.Module):
     #              Ex: ["res", "res", "conv", "clsAtn", "chnAtn"] 
     # cond_dim - (optional) Vector size for the supplied cond vector
     # t_dim - (optional) Vector size for the supplied t vector
+    # c_dim - (optional) Vector size for the supplied context vector
     # dropoutRate - Rate to apply dropout in the model
     # atn_resolution - Resolution of the attention blocks
-    def __init__(self, inCh, outCh, embCh, chMult, num_blocks, blk_types, cond_dim=None, t_dim=None, dropoutRate=0.0, atn_resolution=16):
+    def __init__(self, inCh, outCh, embCh, chMult, num_blocks, blk_types, cond_dim=None, t_dim=None, c_dim=None, dropoutRate=0.0, atn_resolution=16):
         super(U_Net, self).__init__()
 
         self.cond_dim = cond_dim
@@ -54,7 +55,7 @@ class U_Net(nn.Module):
         blocks = []
         curCh = embCh
         for i in range(1, num_blocks+1):
-            blocks.append(unetBlock(curCh, embCh*(2**(chMult*i)), blk_types[i-1], cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
+            blocks.append(unetBlock(curCh, embCh*(2**(chMult*i)), blk_types[i-1], cond_dim, t_dim, c_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
             if i != num_blocks+1:
                 blocks.append(WeightStandardizedConv1d(embCh*(2**(chMult*i)), embCh*(2**(chMult*i)), kernel_size=3, stride=2, padding=1))
             curCh = embCh*(2**(chMult*i))
@@ -69,7 +70,7 @@ class U_Net(nn.Module):
         intermediateCh = curCh
         self.intermediate = nn.Sequential(
             # convNext(intermediateCh, intermediateCh, t_dim, dropoutRate=dropoutRate),
-            unetBlock(intermediateCh, intermediateCh, ["res", "atn", "res"], cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution),
+            unetBlock(intermediateCh, intermediateCh, ["res", "atn", "res"], cond_dim, t_dim, c_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution),
             # Efficient_Channel_Attention(intermediateCh),
             # convNext(intermediateCh, intermediateCh, t_dim, dropoutRate=dropoutRate)
             # unetBlock(intermediateCh, intermediateCh, blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution),
@@ -82,10 +83,10 @@ class U_Net(nn.Module):
         for i in range(num_blocks, -1, -1):
             if i == 0:
                 # blocks.append(unetBlock(embCh*(2**(chMult*i)), embCh*(2**(chMult*i)), blk_types, cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
-                blocks.append(unetBlock(embCh*(2**(chMult*i)), embCh, ["res"], cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
+                blocks.append(unetBlock(embCh*(2**(chMult*i)), embCh, ["res"], cond_dim, t_dim, c_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
             else:
                 blocks.append(WeightStandardizedConvTranspose1d(embCh*(2**(chMult*(i))), embCh*(2**(chMult*(i))), kernel_size=4, stride=2, padding=1))
-                blocks.append(unetBlock(2*embCh*(2**(chMult*i)), embCh*(2**(chMult*(i-1))), blk_types[-min(num_blocks-i+2, num_blocks)], cond_dim, t_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
+                blocks.append(unetBlock(2*embCh*(2**(chMult*i)), embCh*(2**(chMult*(i-1))), blk_types[-min(num_blocks-i+2, num_blocks)], cond_dim, t_dim, c_dim, dropoutRate=dropoutRate, atn_resolution=atn_resolution))
         self.upBlocks = nn.Sequential(
             *blocks
         )
@@ -107,19 +108,29 @@ class U_Net(nn.Module):
                     nn.SiLU(),
                     nn.Linear(t_dim, t_dim),
                 )
+            
+        # Context embeddings
+        if c_dim is not None:
+            self.c_emb = nn.Sequential(
+                    nn.Linear(c_dim, c_dim),
+                    nn.SiLU(),
+                    nn.Linear(c_dim, c_dim),
+                )
     
     
     # Input:
     #   X - Tensor of shape (N, E, T)
-    #   c - (optional) Batch of encoded conditonal information
+    #   y - (optional) Batch of encoded conditonal information
     #       of shape (N, E, T2)
     #   t - (optional) Batch of encoded t values for each 
     #       X value of shape (N, t_dim)
+    #   context - (optional) Batch of encoded context information. This
+    #             is the text conditioning information. Shape (N, c_dim)
     #   masks - (optional) Batch of masks for each X value
     #       of shape (N, 1, T)
     #   masks_cond - (optional) Batch of masks for each c value
     #       of shape (N, 1, T2)
-    def forward(self, X, y=None, t=None, masks=None, masks_cond=None):
+    def forward(self, X, y=None, t=None, context=None, masks=None, masks_cond=None):
         # conditional information assertion
         if type(y) != type(None):
             assert type(self.cond_dim) != type(None), "cond_dim must be specified when using condtional information."
@@ -127,6 +138,10 @@ class U_Net(nn.Module):
         # Encode the time embeddings
         if t is not None:
             t = self.t_emb(t)
+            
+        # Encode the contextual information
+        if context is not None:
+            context = self.c_emb(context).transpose(-1, -2)
 
         # Saved residuals to add to the upsampling
         residuals = []
@@ -147,7 +162,7 @@ class U_Net(nn.Module):
         b = 0
         while b < len(self.downBlocks):
             # Convoltuion blocks
-            X = self.downBlocks[b](X, y, t, mask=masks, mask_cond=masks_cond)
+            X = self.downBlocks[b](X, y, t, context=context, mask=masks, mask_cond=masks_cond)
             
             # Save residual from convolutions
             residuals.append(X.clone())
@@ -171,7 +186,7 @@ class U_Net(nn.Module):
         # return X
         for b in self.intermediate:
             try:
-                X = b(X, y=y, t=t, mask=masks, mask_cond=masks_cond)
+                X = b(X, y=y, t=t, context=context, mask=masks, mask_cond=masks_cond)
             except TypeError:
                 X = b(X)
         
@@ -190,11 +205,11 @@ class U_Net(nn.Module):
                 
             # Other residual blocks
             if len(residuals) > 0:
-                X = self.upBlocks[b](torch.cat((X[:, :, :residuals[0].shape[-1]], residuals[0]), dim=1), y, t, masks, masks_cond)
+                X = self.upBlocks[b](torch.cat((X[:, :, :residuals[0].shape[-1]], residuals[0]), dim=1), y, t, context, masks, masks_cond)
                 
             # Final residual block
             else:
-                X = self.upBlocks[b](X, y, t, masks, masks_cond)
+                X = self.upBlocks[b](X, y, t, context, masks, masks_cond)
             b += 1
             residuals = residuals[1:]
         

@@ -14,8 +14,11 @@ import contextlib
 
 class WavDataset(Dataset):
     @torch.no_grad()
-    def __init__(self, root_dir, load_in_memory=False, limit=-1):
+    def __init__(self, root_dir, load_in_memory=False, use_noise=False, limit=-1):
+        if limit == None:
+            limit = -1
         self.load_in_memory = load_in_memory
+        self.use_noise = use_noise
         
         # List of all data as a three part tuple:
         # (wav file, text file, tts output)
@@ -59,18 +62,19 @@ class WavDataset(Dataset):
         if self.load_in_memory:
             self.data = [(torchaudio.load(f), open(txt, 'r').read().strip()) for f, txt in self.data]
             
+        # Only load TTS if not using noise
+        if not use_noise:
+            # Load in the TTS model
+            # model_name = 'tts_models/en/ljspeech/speedy-speech'
+            # self.tts_sr = 22050
+            model_name = 'tts_models/en/ljspeech/glow-tts'
+            self.tts = TTS(model_name, gpu=False)
+            self.tts_sr = self.tts.synthesizer.output_sample_rate
             
-        # Load in the TTS model
-        # model_name = 'tts_models/en/ljspeech/speedy-speech'
-        # self.tts_sr = 22050
-        model_name = 'tts_models/en/ljspeech/glow-tts'
-        self.tts = TTS(model_name, gpu=False)
-        self.tts_sr = self.tts.synthesizer.output_sample_rate
-        
-        
-        # Transcribe the text using TTS
-        if self.load_in_memory:
-            self.data = [(waveform, text, self.tts.tts(text)) for waveform, text in self.data]
+            
+            # Transcribe the text using TTS
+            if self.load_in_memory:
+                self.data = [(waveform, text, self.tts.tts(text)) for waveform, text in self.data]
         
     @torch.no_grad()
     def __len__(self):
@@ -107,12 +111,15 @@ class WavDataset(Dataset):
             # Only get alpha numeric characters
             text = ''.join([c for c in text if c.isalnum() or c == ' ']) + '.'
             
-
-            with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
-                waveform_unstylized, sample_rate_unstylized = (torch.tensor(self.tts.tts(text)).float().unsqueeze(0), self.tts_sr)
+            if self.use_noise:
+                waveform_unstylized = None
+            else:
+                with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
+                    waveform_unstylized, sample_rate_unstylized = (torch.tensor(self.tts.tts(text)).float().unsqueeze(0), self.tts_sr)
         
-        # Resample audio to 24000 Hz
-        waveform_unstylized = torchaudio.transforms.Resample(sample_rate_unstylized, 24000)(waveform_unstylized)
+        if not self.use_noise:
+            # Resample audio to 24000 Hz
+            waveform_unstylized = torchaudio.transforms.Resample(sample_rate_unstylized, 24000)(waveform_unstylized)
         
         return waveform, waveform_unstylized, text
     
@@ -174,7 +181,7 @@ def train():
     data_path = "audio_stylized_speaker"
     num_workers = 7#8
     prefetch_factor = 4
-    limit = 200
+    limit = None
     
     # Model params
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -183,35 +190,35 @@ def train():
     cond_embed_dim = 128
     num_blocks = 3
     blk_types = [
-        ["res", "cond2"],
-        ["res", "atn", "cond2"],
-        ["res", "atn", "cond2"],
+        ["res", "cond2", "ctx", "res"],
+        ["res", "atn", "cond2", "ctx", "res"],
+        ["res", "atn", "cond2", "ctx", "res"],
     ]
     # device = torch.device("cpu")
-    use_noise = False
+    use_noise = True
     noise_scheduler_type = "cosine"
     
     # Training params
     batch_size = 16
     lr = 1e-4
     save_every_steps = 1000
-    accumulation_steps = 3
-    use_scheduler = True
-    sample_dir = "audio_samples_cond2_new_new"
-    checkpoints_dir = "checkpoints_cond2_new_new"
+    accumulation_steps = 2
+    use_scheduler = False
+    sample_dir = "audio_samples"
+    checkpoints_dir = "checkpoints"
     # sample_dir = "del_"
     # checkpoints_dir = "del_"
     
     # Loading params
-    # pretrained_checkpoint_path = "checkpoints_cond2_new_new/step_34000/"
-    pretrained_checkpoint_path = None
+    pretrained_checkpoint_path = "checkpoints/step_11000/"
+    # pretrained_checkpoint_path = None
     
     
     
     
     
      # Create the WAVDataset
-    dataset = WavDataset(data_path, load_in_memory=False, limit=limit)
+    dataset = WavDataset(data_path, load_in_memory=False, use_noise=use_noise, limit=limit)
     
     # Create the DataLoader
     dataloader = DataLoader(dataset,
@@ -237,7 +244,7 @@ def train():
                   noise_scheduler_type=noise_scheduler_type,
                   device=device,
                   use_noise=use_noise, 
-                  use_scheduler=use_scheduler)
+            )
     
     # Load in the checkpoint
     optimizer_checkpoint = None
@@ -248,7 +255,7 @@ def train():
     
     
     # Train the model
-    model.train_model(dataloader, lr=lr, save_every_steps=save_every_steps, accumulation_steps=accumulation_steps, sample_dir=sample_dir, checkpoints_dir=checkpoints_dir, optimizer_checkpoint=optimizer_checkpoint)
+    model.train_model(dataloader, lr=lr, save_every_steps=save_every_steps, use_scheduler=use_scheduler, accumulation_steps=accumulation_steps, sample_dir=sample_dir, checkpoints_dir=checkpoints_dir, optimizer_checkpoint=optimizer_checkpoint)
     
     
     

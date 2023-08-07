@@ -10,36 +10,122 @@ from TTS.api import TTS
 from src.models.Transformer import Transformer
 from src.models.U_Net import U_Net
 from src.utils.Diffusion_Utils import Diffusion_Utils
+import open_clip
+
+
+
+### From StableDiffusion 2:
+### https://github.com/Stability-AI/stablediffusion/blob/main/ldm/modules/encoders/modules.py#L176
+class AbstractEncoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def encode(self, *args, **kwargs):
+        raise NotImplementedError
+class FrozenOpenCLIPEmbedder(AbstractEncoder):
+    """
+    Uses the OpenCLIP transformer encoder for text
+    """
+    LAYERS = [
+        # "pooled",
+        "last",
+        "penultimate"
+    ]
+
+    def __init__(self, arch="ViT-H-14", version="laion2b_s32b_b79k", device="cuda", max_length=77,
+                 freeze=True, layer="last"):
+        super().__init__()
+        assert layer in self.LAYERS
+        model, _, _ = open_clip.create_model_and_transforms(arch, 
+                                pretrained=version, 
+                                cache_dir="./CLIP_weights", 
+                                device=torch.device("cpu"),
+                                precision="fp32" if device != "cpu" else "fp32",
+                )
+        del model.visual
+        self.model = model.to(device)
+
+        self.device = device
+        self.max_length = max_length
+        if freeze:
+            self.freeze()
+        self.layer = layer
+        if self.layer == "last":
+            self.layer_idx = 0
+        elif self.layer == "penultimate":
+            self.layer_idx = 1
+        else:
+            raise NotImplementedError()
+
+    def freeze(self):
+        self.model = self.model.eval()
+        for param in self.parameters():
+            param.requires_grad = False
+
+    def forward(self, text):
+        tokens = open_clip.tokenize(text)
+        z = self.encode_with_transformer(tokens.to(self.device))
+        return z
+
+    def encode_with_transformer(self, text):
+        x = self.model.token_embedding(text)  # [batch_size, n_ctx, d_model]
+        x = x + self.model.positional_embedding
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self.text_transformer_forward(x, attn_mask=self.model.attn_mask)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+        x = self.model.ln_final(x)
+        return x
+
+    def text_transformer_forward(self, x: torch.Tensor, attn_mask=None):
+        for i, r in enumerate(self.model.transformer.resblocks):
+            if i == len(self.model.transformer.resblocks) - self.layer_idx:
+                break
+            if self.model.transformer.grad_checkpointing and not torch.jit.is_scripting():
+                x = checkpoint(r, x, attn_mask)
+            else:
+                x = r(x, attn_mask=attn_mask)
+        return x
+
+    def encode(self, text):
+        return self(text)
 
 
 
 
 class Model(nn.Module):
-    def __init__(self, embed_dim=128, t_embed_dim=128, cond_embed_dim=128, num_blocks=2, blk_types=["res", "cond2", "res"], noise_scheduler_type="linear", device=torch.device("cpu"), use_noise=False, use_scheduler=True):
+    def __init__(self, embed_dim=128, t_embed_dim=128, cond_embed_dim=128, num_blocks=2, blk_types=["res", "cond2", "res"], noise_scheduler_type="linear", device=torch.device("cpu"), use_noise=False):
         super(Model, self).__init__()
         
         self.device = device
         self.use_noise = use_noise
         self.sampling_rate = 24_000
-        self.scale = 10
-        self.use_scheduler = False
+        self.scale = 1
         
         self.embed_dim = embed_dim
         self.t_embed_dim = t_embed_dim
         
         
         ### Encodec
+        ### Note: Load as lsits to hide from parameters
         # load the model + processor (for pre-processing the audio)
-        self.encodec_model = EncodecModel.from_pretrained("facebook/encodec_24khz").eval().to(self.device)
-        self.processor = AutoProcessor.from_pretrained("facebook/encodec_24khz")
+        self.encodec_model = [EncodecModel.from_pretrained("facebook/encodec_24khz").eval().to(self.device)]
+        for param in self.encodec_model[0].parameters():
+            param.requires_grad = False
+        self.processor = [AutoProcessor.from_pretrained("facebook/encodec_24khz")]
         # Get the quantizer from the model
-        self.quantizer = self.encodec_model.quantizer
+        self.quantizer = [self.encodec_model[0].quantizer]
         
+        
+        
+        ### CLIP model
+        # self.CLIP, self.CLIP_tok = get_clip_model(self.device)
+        self.CLIP = [FrozenOpenCLIPEmbedder(device=self.device, freeze=True, layer="last")]
         
         
         ### TTS model
-        model_name = 'tts_models/en/ljspeech/speedy-speech'
-        self.tts = TTS(model_name, gpu=False)
+        if not self.use_noise:
+            model_name = 'tts_models/en/ljspeech/speedy-speech'
+            self.tts = [TTS(model_name, gpu=False)]
         
         
         # Model to train
@@ -47,13 +133,13 @@ class Model(nn.Module):
         if type(blk_types[0]) == str:
             blk_types = [blk_types for _ in range(num_blocks)]
         assert len(blk_types) == num_blocks, "blk_types must be the same length as num_blocks"
-        self.model = U_Net(128, 128, embed_dim, 1, num_blocks=num_blocks, blk_types=blk_types, cond_dim=cond_embed_dim, t_dim=t_embed_dim).to(self.device)
+        self.model = U_Net(128, 128, embed_dim, 1, num_blocks=num_blocks, blk_types=blk_types, cond_dim=cond_embed_dim, t_dim=t_embed_dim, c_dim=1024).to(self.device)
         
         # Diffusion model utility class
         self.diffusion_utils = Diffusion_Utils(t_embed_dim, scheduler_type=noise_scheduler_type)
         
         # Paramater counts
-        print("U-Net model has {} parameters".format(sum(p.numel() for p in self.model.parameters() if p.requires_grad)))
+        print("U-Net model has {} parameters".format(sum(p.numel() for p in self.parameters() if p.requires_grad)))
         
         
         
@@ -61,7 +147,7 @@ class Model(nn.Module):
         
     def process_data(self, audio_segment, masks=None):
         # Preporcess the audio segments
-        audio_segment = self.processor(audio_segment.squeeze(1).tolist(), sampling_rate=24000, return_tensors="pt")
+        audio_segment = self.processor[0](audio_segment.squeeze(1).tolist(), sampling_rate=24_000, return_tensors="pt")
         
         # Change the masks
         if masks is not None:
@@ -71,13 +157,13 @@ class Model(nn.Module):
         # Encode inputs
         # NOTE: Encodec is stupid and expects the masks to be 0 where we want to
         # keep the audio and 1 where we want to mask it out
-        encoded_outputs = self.encodec_model.encode(audio_segment["input_values"].to(self.device), audio_segment["padding_mask"].to(self.device), bandwidth=24.0)
+        encoded_outputs = self.encodec_model[0].encode(audio_segment["input_values"].to(self.device), audio_segment["padding_mask"].to(self.device), bandwidth=24.0)
         encoded_outputs = encoded_outputs.audio_codes
         
         
         # Dequantize the outputs.
         # Note the quantizer expects inputs to be of shape (CB, B, T)
-        encoded_outputs = self.quantizer.decode(encoded_outputs.squeeze(0).transpose(0, 1))
+        encoded_outputs = self.quantizer[0].decode(encoded_outputs.squeeze(0).transpose(0, 1))
         
         # Transpose the inputs to (B, E, T)
         encoded_outputs = encoded_outputs.float().to(self.device)
@@ -90,7 +176,7 @@ class Model(nn.Module):
             masks_full = torch.ones(encoded_outputs.shape[0], 1, encoded_outputs.shape[2], dtype=torch.bool, device=self.device)
             for i, m in enumerate(masks):
                 # New mask is basically quantized from 24_000 -> 75
-                new_mask = m//(self.sampling_rate//self.quantizer.frame_rate)
+                new_mask = m//(self.sampling_rate//self.quantizer[0].frame_rate)
                 masks_full[i][:, new_mask:] = 0
                 
         # Return masked outputs
@@ -103,17 +189,14 @@ class Model(nn.Module):
     
     
     
-    def train_model(self, dataloader, lr=1e-3, save_every_steps=1000, sample_dir="audio_samples", checkpoints_dir="checkpoints", accumulation_steps=1, optimizer_checkpoint=None):
+    def train_model(self, dataloader, lr=1e-3, save_every_steps=1000, use_scheduler=True, sample_dir="audio_samples", checkpoints_dir="checkpoints", accumulation_steps=1, optimizer_checkpoint=None):
         self.train()
         
         # Optimzer
         optimizer = torch.optim.AdamW(self.parameters(), lr=lr) if optimizer_checkpoint is None else optimizer_checkpoint
         
-        # Loss function
-        loss_fn = torch.nn.MSELoss()
-        
         # Cosine annealing scheduler with warm restarts
-        if self.use_scheduler:
+        if use_scheduler:
             scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=1e-6)
         
         
@@ -151,7 +234,7 @@ class Model(nn.Module):
         
         
         
-        num_steps = 0
+        num_steps = 1
         for epoch in range(0, 10000):
             # Total batch loss
             batch_loss = 0
@@ -165,6 +248,11 @@ class Model(nn.Module):
                         unstylized_audio = [x[1] for x in batch]
                     text = [x[2] for x in batch]
                     conditional_audio = [x[3] if type(x[3]) is not type(None) else torch.zeros(1, 24000) for x in batch]
+                    
+                    # Encode text using CLIP (N, 77, 1024)
+                    # text = self.CLIP.encode_text(self.CLIP_tok(text).to(self.device)).float().to(self.device)
+                    # text = self.process_CLIP(text)
+                    text = self.CLIP[0].encode(text)
                     
                     # Max lengths for each type of audio
                     stylized_max_length = max([x.shape[1] for x in stylized_audio])
@@ -281,7 +369,7 @@ class Model(nn.Module):
                     
                 # Forward pass to get the predicted unstylized audio
                 # from the interpolated audio
-                stylized_pred = self.model(audio_super, conditional if conditional_audio is not None else None, positional_embeddings, masks_stylized, masks_conditional)
+                stylized_pred = self.model(audio_super, conditional if conditional_audio is not None else None, positional_embeddings, text, masks_stylized, masks_conditional)
                 
                 
                 
@@ -291,11 +379,11 @@ class Model(nn.Module):
                 #     # positional_embeddings = positional_embeddings * 10_000
                 #     comb_sum = masks_stylized[0].sum()
                 #     cond_sum = masks_conditional[0].sum()
-                #     stylized_pred = self.model.eval()(audio_super.clone(), conditional.clone() if conditional_audio is not None else None, positional_embeddings.clone(), masks_stylized.clone(), masks_conditional.clone())
+                #     stylized_pred = self.model.eval()(audio_super.clone(), conditional.clone() if conditional_audio is not None else None, positional_embeddings.clone(), text.clone(), masks_stylized.clone(), masks_conditional.clone())
                 #     # stylized_pred = stylized_pred[:1, :, :comb_sum]
                 #     stylized_pred *= self.scale
                     
-                #     stylized_pred_ = self.model.eval()(audio_super[:1, :, :comb_sum], conditional[:1, :, :cond_sum] if conditional_audio is not None else None, positional_embeddings[:1])
+                #     stylized_pred_ = self.model.eval()(audio_super[:1, :, :comb_sum], conditional[:1, :, :cond_sum] if conditional_audio is not None else None, positional_embeddings[:1], text[:1])
                 #     stylized_pred_ *= self.scale
                     
                 #     diff = ((stylized_pred[0, :, :stylized_pred_.shape[-1]] - stylized_pred_)**2).mean()
@@ -309,7 +397,8 @@ class Model(nn.Module):
                 # the average doesn't get thrown off. With the mask, the
                 # average will be a lot lower for shorter sequences.
                 # loss = loss_fn(stylized, stylized_pred)
-                loss = (((stylized-stylized_pred)**2).flatten(1, -1).sum(1)/(masks_stylized.squeeze(1).sum(1)*stylized.shape[1])).mean()
+                loss = (((stylized-stylized_pred)**2).flatten(1, -1).sum(1)/(masks_stylized.squeeze(1).sum(1)*stylized.shape[1])).mean() \
+                    / accumulation_steps
                 
                 # Backward pass
                 loss.backward()
@@ -317,11 +406,11 @@ class Model(nn.Module):
                 # Update model every accumulation_steps 
                 if num_steps % accumulation_steps == 0:
                     optimizer.step()
-                    if self.use_scheduler:
-                        scheduler.step(lambda : epoch + batch_num / len(dataloader))
+                    if use_scheduler:
+                        scheduler.step(epoch + batch_num / len(dataloader))
                     optimizer.zero_grad()
                 
-                if epoch == 0:
+                if num_steps < save_every_steps:
                     print(f"Step: {num_steps} | Loss: {loss.item()}")
                 
                 batch_loss += loss.item()
@@ -350,13 +439,13 @@ class Model(nn.Module):
                         conditional = conditional[:1, :, :masks_conditional[0].sum()]
                             
                         # Generate audio prediction by diffusing the unstylized audio to the predicted stylized audio
-                        stylized_audio_pred = self.diffusion_utils.sample_data(self.model, unstylized, cond=conditional if conditional_audio is not None else None)
+                        stylized_audio_pred = self.diffusion_utils.sample_data(self.model, unstylized, cond=conditional if conditional_audio is not None else None, context=text)
                         stylized_audio_pred *= self.scale
                         # Save audio samples
                         torchaudio.save(f"{sample_dir}/step_{num_steps}/stylized.wav", stylized_audio[0].cpu(), 24000)
                         if not self.use_noise:
                             torchaudio.save(f"{sample_dir}/step_{num_steps}/unstylized.wav", unstylized_audio[0].cpu(), 24000)
-                        torchaudio.save(f"{sample_dir}/step_{num_steps}/unstylized_recon.wav", self.encodec_model.decoder(stylized_audio_pred.to(self.device))[0].cpu(), 24000)
+                        torchaudio.save(f"{sample_dir}/step_{num_steps}/unstylized_recon.wav", self.encodec_model[0].decoder(stylized_audio_pred.to(self.device))[0].cpu(), 24000)
                         
                         # Save model checkpoints
                         if not os.path.exists(f"{checkpoints_dir}/step_{num_steps}"):
@@ -369,7 +458,7 @@ class Model(nn.Module):
                         torch.save(optimizer.state_dict(), f"{checkpoints_dir}/step_{num_steps}/optimizer.pth")
                         
                         # Save scheduler checkpoints
-                        if self.use_scheduler:
+                        if use_scheduler:
                             if not os.path.exists(f"{checkpoints_dir}/step_{num_steps}"):
                                 os.makedirs(f"{checkpoints_dir}/step_{num_steps}")
                             torch.save(scheduler.state_dict(), f"{checkpoints_dir}/step_{num_steps}/scheduler.pth")
@@ -385,7 +474,7 @@ class Model(nn.Module):
                 
                 # # Free memory except on last batch
                 # if batch_num != len(dataloader)-1:
-                del stylized, unstylized, conditional, masks_stylized, masks_conditional, stylized_pred, audio_super, positional_embeddings, timesteps
+                del stylized, unstylized, conditional, masks_stylized, masks_conditional, stylized_pred, audio_super, positional_embeddings, timesteps, text
                 if not self.use_noise:
                     del masks_unstylized
                 torch.cuda.empty_cache()
@@ -401,9 +490,9 @@ class Model(nn.Module):
     def infer(self, text, conditionals=[], num_steps=100):
         # Create the unstylized audio
         try:
-            unstylized = torch.tensor(self.tts.tts(text)).float()
+            unstylized = torch.tensor(self.tts[0].tts(text)).float()
         except RuntimeError:
-            unstylized = torch.tensor(self.tts.tts(text + "...")).float()
+            unstylized = torch.tensor(self.tts[0].tts(text + "...")).float()
             
         # Resample generated audio to 24000 Hz
         unstylized = torchaudio.transforms.Resample(22050, 24000)(unstylized)
@@ -411,6 +500,9 @@ class Model(nn.Module):
         # Load in the conditional audio
         conditionals = [torchaudio.load(path) for path in conditionals]
         conditionals = torch.cat([torchaudio.transforms.Resample(c[1], 24000)(c[0]) for c in conditionals], dim=1)
+        
+        # Encode the text data
+        text = self.CLIP[0].encode(text)
         
         # Pass the data through the encodec
         unstylized, _ = self.process_data(unstylized.unsqueeze(0))
@@ -425,15 +517,15 @@ class Model(nn.Module):
         # conditionals = torch.cat(conditionals, dim=2)
         
         # Permute audio to be of shape (N, E, T)
-        unstylized = unstylized.to(self.device) / self.scale
-        conditionals = conditionals.to(self.device) / self.scale
+        unstylized = unstylized.to(self.device)
+        conditionals = conditionals.to(self.device)
         
         # Get prediction
-        pred = self.diffusion_utils.sample_data(self.model, unstylized, num_steps=num_steps, cond=conditionals)
-        pred *= self.scale
+        pred = self.diffusion_utils.sample_data(self.model, unstylized, num_steps=num_steps, cond=conditionals, context=text)
+        # pred *= self.scale
         
         # Decode the audio
-        return self.encodec_model.decoder(pred.to(self.device))[0].cpu()
+        return self.encodec_model[0].decoder(pred.to(self.device))[0].cpu()
     
     
     

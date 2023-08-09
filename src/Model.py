@@ -366,7 +366,6 @@ class Model(nn.Module):
                     
                     
                     
-                    
                 # Forward pass to get the predicted unstylized audio
                 # from the interpolated audio
                 stylized_pred = self.model(audio_super, conditional if conditional_audio is not None else None, positional_embeddings, text, masks_stylized, masks_conditional)
@@ -425,7 +424,7 @@ class Model(nn.Module):
                 # Save audio samples
                 if num_steps % save_every_steps == 0:
                     with torch.no_grad():
-                        print(f"Step: {num_steps} | Loss: {batch_loss / num_steps}")
+                        print(f"Step: {num_steps} | Loss: {batch_loss / batch_num}")
                         
                         ## Audio samples
                         if not os.path.exists(f"{sample_dir}/step_{num_steps}"):
@@ -488,14 +487,19 @@ class Model(nn.Module):
     # Given text and a list of conditionals, generate the stylized audio
     @torch.no_grad()
     def infer(self, text, conditionals=[], num_steps=100):
-        # Create the unstylized audio
-        try:
-            unstylized = torch.tensor(self.tts[0].tts(text)).float()
-        except RuntimeError:
-            unstylized = torch.tensor(self.tts[0].tts(text + "...")).float()
+        if not self.use_noise:
+            # Create the unstylized audio
+            try:
+                unstylized = torch.tensor(self.tts[0].tts(text)).float()
+            except RuntimeError:
+                unstylized = torch.tensor(self.tts[0].tts(text + "...")).float()
+                
+            # Resample generated audio to 24000 Hz
+            unstylized = torchaudio.transforms.Resample(22050, 24000)(unstylized)
             
-        # Resample generated audio to 24000 Hz
-        unstylized = torchaudio.transforms.Resample(22050, 24000)(unstylized)
+            unstylized, _ = self.process_data(unstylized.unsqueeze(0))
+        else:
+            unstylized = torch.randn(1, 128, 300)
         
         # Load in the conditional audio
         conditionals = [torchaudio.load(path) for path in conditionals]
@@ -505,7 +509,6 @@ class Model(nn.Module):
         text = self.CLIP[0].encode(text)
         
         # Pass the data through the encodec
-        unstylized, _ = self.process_data(unstylized.unsqueeze(0))
         # conditionals = [self.process_data(c)[0] for c in conditionals]
         conditionals, _ = self.process_data(conditionals)
         

@@ -73,10 +73,12 @@ class Diffusion_Utils:
     
     # Given data at timestep t and the predicted origin/prior, x_1,
     # take a DDIM step to get the next timestep
-    def take_ddim_step(self, x_t, x_1_pred, t_now, t_next, clamp=False):
+    def take_ddim_step(self, x_t, x_0_pred, t_now, t_next, clamp=False):
         # Compute the gamma values for the timesteps
         gammas = self.scheduler(t_now).reshape(-1, 1, 1)
         gammas_next = self.scheduler(t_next).reshape(-1, 1, 1)
+        
+        x_1_pred = (x_t - torch.sqrt(gammas)*x_0_pred)/torch.sqrt(1-gammas) # Obtained by solving the forward noising equation for x_1
         
         # DDIM without noise component
         if clamp:
@@ -128,10 +130,10 @@ class Diffusion_Utils:
             x_0_pred = model(x_t/1, cond, positional_encodings, context)*1
             
             # Take DDIM step on the predicted x_1 prior
-            # x_t = self.take_ddim_step(x_t, x_1_pred, t, t_next, step==0)
+            x_t = self.take_ddim_step(x_t, x_0_pred, t, t_next, torch.all(step==0))
             
             # Take Cold Diffusion step on the predicted x_0 posterior
-            x_t = self.take_cold_diffusion_step(x_t, x_0_pred, t, t_next)
+            # x_t = self.take_cold_diffusion_step(x_t, x_0_pred, t, t_next)
             
         # ### Final prediction
         # step = num_steps

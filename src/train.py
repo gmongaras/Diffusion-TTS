@@ -185,16 +185,16 @@ def train():
     
     # Model params
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # device = torch.device("cpu")
     embed_dim = 256
     t_embed_dim = 256
     cond_embed_dim = 128
     num_blocks = 3
     blk_types = [
-        ["res", "cond2", "ctx", "res"],
-        ["res", "atn", "cond2", "ctx", "res"],
-        ["res", "atn", "cond2", "ctx", "res"],
+        ["res", "cond3", "ctx", "res"],
+        ["res", "atn", "cond3", "ctx", "res"],
+        ["res", "atn", "cond3", "ctx", "res"],
     ]
-    # device = torch.device("cpu")
     use_noise = True
     noise_scheduler_type = "cosine"
     
@@ -203,15 +203,15 @@ def train():
     lr = 1e-4
     save_every_steps = 1000
     accumulation_steps = 2
-    use_scheduler = False
+    use_scheduler = True
     sample_dir = "audio_samples"
     checkpoints_dir = "checkpoints"
     # sample_dir = "del_"
     # checkpoints_dir = "del_"
     
     # Loading params
-    pretrained_checkpoint_path = "checkpoints/step_11000/"
-    # pretrained_checkpoint_path = None
+    # pretrained_checkpoint_path = "checkpoints/step_94000/"
+    pretrained_checkpoint_path = None
     
     
     

@@ -57,7 +57,7 @@ class unetBlock(nn.Module):
             elif blk == "cond3":
                 blocks.append(ContextBlock(curCh, cond_dim, name="cond"))
             elif blk == "atn":
-                blocks.append(MultiHeadAttention(curCh, 8))
+                blocks.append(MultiHeadAttention(curCh, 8, norm_type="post_norm"))
             elif blk == "ctx":
                 blocks.append(ContextBlock(curCh, c_dim, name="text_context"))
 
@@ -87,7 +87,7 @@ class unetBlock(nn.Module):
             elif type(b) == ConditionalBlock or type(b) == ConditionalBlock2 or (type(b) == ContextBlock and b.name=="cond"):
                 X = b(X, y, mask, mask_cond)
             elif type(b) == MultiHeadAttention:
-                X = b(X, X, X, mask, mask, mask)
+                X = b(X, X, X, mask, mask, mask, res=X)
                 # X = b(X.transpose(-1, -2), X.transpose(-1, -2), X.transpose(-1, -2))[0].transpose(-1, -2) 
             elif type(b) == ContextBlock:
                 X = b(X, context, mask, None)

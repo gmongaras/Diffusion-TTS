@@ -50,10 +50,22 @@ class ContextBlock(nn.Module):
         q, k, v = self._split_heads(q), self._split_heads(k), self._split_heads(v)
         
         # Compute attention along the embedding dimension
-        scores = ((q.transpose(-1, -2)@k) / (self.embed_dim//self.num_heads ** 0.5)).softmax(-1)
+        scores = ((k.transpose(-1, -2)@q) / (self.embed_dim//self.num_heads ** 0.5))
+        
+        # Mask scores along input (queries) dimension
+        if type(mask) == torch.Tensor:
+            scores = scores.masked_fill(~mask.unsqueeze(-2), -1e9)
+        
+        # Apply softmax
+        scores = scores.softmax(-1)
+        
+        # Apply mask along the context (keys) dimension
+        if type(mask_ctx) == torch.Tensor:
+            scores = scores.masked_fill(~mask_ctx.unsqueeze(-1), 0)
         
         # Compute the output
-        out = (scores@v.transpose(-1, -2)).transpose(-1, -2)
+        # out = (scores@v.transpose(-1, -2)).transpose(-1, -2)
+        out = v@scores
         
         # Compute the output and remove the heads
         out = self._combine_heads(out)

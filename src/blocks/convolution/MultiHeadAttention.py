@@ -10,11 +10,12 @@ except ModuleNotFoundError:
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, embed_dim, num_heads, query_dim=None, key_dim=None, value_dim=None, output_dim=None):
+    def __init__(self, embed_dim, num_heads, norm_type="GN", query_dim=None, key_dim=None, value_dim=None, output_dim=None):
         super().__init__()
         
         self.embed_dim = embed_dim
         self.num_heads = num_heads
+        self.norm_type = norm_type
         self.query_dim = query_dim if query_dim else embed_dim
         self.key_dim = key_dim if key_dim else embed_dim
         self.value_dim = value_dim if value_dim else embed_dim
@@ -29,6 +30,20 @@ class MultiHeadAttention(nn.Module):
         self.v_proj = WeightStandardizedConv1d(self.value_dim, embed_dim, 1)
         self.out_proj = WeightStandardizedConv1d(embed_dim, self.output_dim, 1)
         
+        if norm_type == "pre_norm":
+            self.norm_q = nn.LayerNorm(embed_dim)
+            self.norm_k = nn.LayerNorm(embed_dim)
+            self.norm_v = nn.LayerNorm(embed_dim)
+        elif norm_type == "post_norm":
+            self.norm = nn.LayerNorm(embed_dim)
+        elif norm_type == "GN":
+            raise NotImplementedError("GN not implemented. Has issues with masks")
+            self.norm_q = nn.GroupNorm(num_heads, embed_dim)
+            self.norm_k = nn.GroupNorm(num_heads, embed_dim)
+            self.norm_v = nn.GroupNorm(num_heads, embed_dim)
+        else:
+            raise ValueError(f"norm_type must be 'pre_norm', 'post_norm', or 'GN', not {norm_type}")
+        
         
     def _split_heads(self, x):
         # Split the last dimension into (num_heads, depth)
@@ -39,10 +54,19 @@ class MultiHeadAttention(nn.Module):
         return x.reshape(x.shape[0], self.embed_dim, -1)
         
         
-    def forward(self, q, k, v, query_mask=None, key_mask=None, value_mask=None, transpose_scores=False):
+    def forward(self, q, k, v, query_mask=None, key_mask=None, value_mask=None, res=None, transpose_scores=False):
+        if self.norm_type == "pre_norm":
+            q = self.norm_q(q)
+            k = self.norm_k(k)
+            v = self.norm_v(v)
+        
         # Project the queries, keys and values
         # Note that the masked states are retained
         q, k, v = self.q_proj(q, query_mask), self.k_proj(k, key_mask), self.v_proj(v, value_mask)
+        
+        # Normalize each head with group norm
+        if self.norm_type == "GN":
+            q, k, v = self.norm_q(q), self.norm_k(k), self.norm_v(v)
         
         # Split each embedding into self.num_heads pieces
         q, k, v = self._split_heads(q), self._split_heads(k), self._split_heads(v)
@@ -83,5 +107,10 @@ class MultiHeadAttention(nn.Module):
         out = self._combine_heads(out)
         
         # Project output and return
-        return self.out_proj(out, query_mask if not transpose_scores else key_mask)
+        out = self.out_proj(out, query_mask if not transpose_scores else key_mask)
+        if type(res) == torch.Tensor:
+            out = out + res
+        if self.norm_type == "post_norm":
+            out = self.norm(out.transpose(-1, -2)).transpose(-1, -2)
+        return out
         

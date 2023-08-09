@@ -179,16 +179,13 @@ class U_Net(nn.Module):
                 b += 1
             
         # Reverse the residuals
-        residuals = residuals[::-1]
+        residuals = residuals[::-1] 
         
         # Send the output of the downsampling block
         # through the intermediate blocks
         # return X
         for b in self.intermediate:
-            try:
-                X = b(X, y=y, t=t, context=context, mask=masks, mask_cond=masks_cond)
-            except TypeError:
-                X = b(X)
+            X = b(X, y=y, t=t, context=context, mask=masks, mask_cond=masks_cond)
         
         # Send the intermediate batch through the upsampling
         # block to get the original shape

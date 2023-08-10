@@ -210,8 +210,8 @@ def train():
     # checkpoints_dir = "del_"
     
     # Loading params
-    # pretrained_checkpoint_path = "checkpoints/step_94000/"
-    pretrained_checkpoint_path = None
+    pretrained_checkpoint_path = "checkpoints/step_11000/"
+    # pretrained_checkpoint_path = None
     
     
     

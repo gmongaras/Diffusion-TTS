@@ -1,8 +1,12 @@
 import torch
-from src.utils.SinusoidalPositionEmbeddings import SinusoidalPositionEmbeddings
 from tqdm import tqdm
 from copy import deepcopy
 import math
+
+try: # For distributed training
+    from src.utils.SinusoidalPositionEmbeddings import SinusoidalPositionEmbeddings
+except ModuleNotFoundError:
+    from utils.SinusoidalPositionEmbeddings import SinusoidalPositionEmbeddings
 
 
 
@@ -65,7 +69,7 @@ class Diffusion_Utils:
     # NOTE: The forward noising equation is x_t = sqrt(gammas)*x_0 + sqrt(1-gammas)*x_1
     def diffuse_data(self, t, x_0, x_1):
         # Compute the gamma values for each timestep
-        gammas = self.scheduler(t).reshape(-1, 1, 1)
+        gammas = self.scheduler(t).reshape(-1, 1, 1).to(x_0.device)
         
         # Compute the diffusion images
         return torch.sqrt(gammas) * x_0 + torch.sqrt(1 - gammas) * x_1

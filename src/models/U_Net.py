@@ -1,23 +1,20 @@
 
-# Realtive import
-import sys
-sys.path.append('../blocks')
+# # Realtive import
+# import sys
+# sys.path.append('../blocks')
 
 import torch
 from torch import nn
 try:
+    from blocks.convolution.unetBlock import unetBlock
+    from blocks.convolution.wideResNet import WeightStandardizedConv1d
+    from blocks.convolution.WeightStandardizedConv1d import WeightStandardizedConv1d
+    from blocks.convolution.WeightStandardizedConvTranspose1d import WeightStandardizedConvTranspose1d
+except ModuleNotFoundError:
     from src.blocks.convolution.unetBlock import unetBlock
-    from src.blocks.convolution.Efficient_Channel_Attention import Efficient_Channel_Attention
-    from src.blocks.convolution.Multihead_Attn import Multihead_Attn
     from src.blocks.convolution.wideResNet import WeightStandardizedConv1d
     from src.blocks.convolution.WeightStandardizedConv1d import WeightStandardizedConv1d
     from src.blocks.convolution.WeightStandardizedConvTranspose1d import WeightStandardizedConvTranspose1d
-except ModuleNotFoundError:
-    from ..blocks.convolution.unetBlock import unetBlock
-    from ..blocks.convolution.Efficient_Channel_Attention import Efficient_Channel_Attention
-    from ..blocks.convolution.Multihead_Attn import Multihead_Attn
-    from ..blocks.convoltuion.WeightStandardizedConv1d import WeightStandardizedConv1d
-    from ..blocks.convoltuion.WeightStandardizedConvTranspose1d import WeightStandardizedConvTranspose1d
     
 
 

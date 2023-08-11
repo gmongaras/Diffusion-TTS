@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 from einops import rearrange
-from src.blocks.convolution.MaskedInstanceNorm1d import MaskedInstanceNorm1d
 
 try:
     from src.blocks.convolution.WeightStandardizedConv1d import WeightStandardizedConv1d

@@ -16,7 +16,15 @@
             // "module": "src.encodec.modules.seanet",
 
             // "module": "src.train",
-            "module": "src.infer",
+            // "module": "src.infer",
+
+
+            "program": "/users/gmongaras/miniconda3/bin/torchrun",
+            "args": [
+                "--nproc_per_node=1",
+                "--master-port", "29502",
+                "src/train.py",
+            ],
 
 
 

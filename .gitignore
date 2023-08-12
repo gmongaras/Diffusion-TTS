@@ -3,7 +3,10 @@ audio_dataset/
 audio/
 audio_stylized*
 checkpoints*
-audio_samples/
+audio_samples*
+CLIP_weights/
+ubuntu_venv/
+windows_venv/
 
 
 # Byte-compiled / optimized / DLL files

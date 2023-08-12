@@ -134,10 +134,10 @@ class Diffusion_Utils:
             x_0_pred = model(x_t/1, cond, positional_encodings, context)*1
             
             # Take DDIM step on the predicted x_1 prior
-            x_t = self.take_ddim_step(x_t, x_0_pred, t, t_next, torch.all(step==0))
+            # x_t = self.take_ddim_step(x_t, x_0_pred, t, t_next, torch.all(step==0))
             
             # Take Cold Diffusion step on the predicted x_0 posterior
-            # x_t = self.take_cold_diffusion_step(x_t, x_0_pred, t, t_next)
+            x_t = self.take_cold_diffusion_step(x_t, x_0_pred, t, t_next)
             
         # ### Final prediction
         # step = num_steps

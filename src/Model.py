@@ -284,6 +284,8 @@ class Model(nn.Module):
         # Load in the conditional audio
         conditionals = [torchaudio.load(path) for path in conditionals]
         conditionals = torch.cat([torchaudio.transforms.Resample(c[1], 24000)(c[0]) for c in conditionals], dim=1)
+        # Ensure one channel
+        conditionals = conditionals.mean(dim=0, keepdim=True)
         
         # Encode the text data
         text = self.CLIP[0].encode(text)

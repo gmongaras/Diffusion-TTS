@@ -29,21 +29,23 @@ def train():
     ]
     use_noise = True
     noise_scheduler_type = "cosine"
+    prediction_strategy = "noise"               # "noise" to predict noise, "audio" to predict stylized audio
+    text_encoder_type = "T5"                    # CLIP or T5
     
     # Training params
-    batch_size = 64
+    batch_size = 16#64
     lr = 1e-4
-    save_every_steps = 1000
-    accumulation_steps = 1
+    save_every_steps = 5000
+    accumulation_steps = 2
     use_scheduler = True
-    sample_dir = "audio_samples"
-    checkpoints_dir = "checkpoints"
+    sample_dir = "audio_samples_noise"
+    checkpoints_dir = "checkpoints_noise"
     # sample_dir = "del_"
     # checkpoints_dir = "del_"
     
     # Loading params
-    # pretrained_checkpoint_path = "checkpoints/step_10/"
-    pretrained_checkpoint_path = None
+    pretrained_checkpoint_path = "checkpoints_noise/step_20000/"
+    # pretrained_checkpoint_path = None
     
     
     
@@ -62,6 +64,8 @@ def train():
                   num_blocks=num_blocks,
                   blk_types=blk_types,
                   noise_scheduler_type=noise_scheduler_type,
+                  prediction_strategy=prediction_strategy,
+                  text_encoder_type=text_encoder_type,
                   device=device,
                   use_noise=use_noise, 
             )

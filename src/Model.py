@@ -90,17 +90,67 @@ class FrozenOpenCLIPEmbedder(AbstractEncoder):
         return x
 
     def encode(self, text):
+        # Ouput shape: (N, 77, 1024)
+        return self(text)
+    
+    
+    
+    
+
+
+class FrozenT5Embedder(AbstractEncoder):
+    def __init__(self):
+        super().__init__()
+        
+        from transformers import AutoTokenizer, T5EncoderModel
+        
+        # Load encoder and tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained("t5-base",
+                cache_dir="./T5_weights",
+                padding=True,
+                padding_strategy="longest",
+                use_fast=True)
+        self.model = T5EncoderModel.from_pretrained("t5-base",
+                cache_dir="./T5_weights",
+                output_hidden_states=True)
+        
+        self.freeze_weights()
+        
+    def freeze_weights(self):
+        self.model.eval()
+        for param in self.model.parameters():
+            param.requires_grad = False
+        
+    def forward(self, text):
+        text = self.tokenizer(text, return_tensors="pt", padding="longest")
+        return self.model(input_ids=text["input_ids"].to(self.model.device), attention_mask=text["attention_mask"].to(self.model.device)).last_hidden_state
+        
+    def encode(self, text):
+        # Ouput shape: (N, T, 768)
         return self(text)
 
 
 
 
+
 class Model(nn.Module):
-    def __init__(self, embed_dim=128, t_embed_dim=128, cond_embed_dim=128, num_blocks=2, blk_types=["res", "cond2", "res"], noise_scheduler_type="linear", use_noise=False, device="cpu"):
+    def __init__(self, 
+            embed_dim=128,                      # Initial embedding dimension in the U-Net
+            t_embed_dim=128,                    # Universal time embedding dimension
+            cond_embed_dim=128,                 # Universal conditional embedding dimension
+            num_blocks=2,                       # Number of U-Net blocks
+            blk_types=["res", "cond2", "res"],  # Types of U-Net blocks (res, cond, cond2, cond3, atn, ctx)
+            noise_scheduler_type="linear",      # Type of noise scheduler (linear, cosine, or sigmoid)
+            prediction_strategy="noise",        # Type of prediction strategy
+            text_encoder_type="CLIP",           # Type of text encoder (T5, CLIP)
+            use_noise=False,                    # True to use a noise prior, False to use a TTS prior
+            device="cpu"):                      # Device to use (cpu or gpu)
         super(Model, self).__init__()
         
         self.device = device
         self.use_noise = use_noise
+        self.prediction_strategy = prediction_strategy
+        self.text_encoder_type = text_encoder_type
         self.sampling_rate = 24_000
         self.scale = 1
         
@@ -118,6 +168,8 @@ class Model(nn.Module):
             "num_blocks": num_blocks,
             "blk_types": blk_types,
             "noise_scheduler_type": noise_scheduler_type,
+            "prediction_strategy": prediction_strategy,
+            "text_encoder_type": text_encoder_type,
             "use_noise": use_noise,
         }
         
@@ -162,7 +214,18 @@ class Model(nn.Module):
         
         ### CLIP model
         # self.CLIP, self.CLIP_tok = get_clip_model(self.device)
-        self.CLIP = [FrozenOpenCLIPEmbedder(device=self.device, freeze=True, layer="last")]
+        if self.text_encoder_type == "CLIP":
+            self.text_encoder = [FrozenOpenCLIPEmbedder(device=self.device, freeze=True, layer="last")]
+        elif self.text_encoder_type == "T5":
+            self.text_encoder = [FrozenT5Embedder().to(self.device)]
+        else:
+            raise ValueError("text_encoder_type must be either 'CLIP' or 'T5'")
+        
+        # Text dimension is different for CLIP and T5
+        if self.text_encoder_type == "CLIP":
+            text_dim = 1024
+        elif self.text_encoder_type == "T5":
+            text_dim = 768
         
         
         ### TTS model
@@ -176,10 +239,10 @@ class Model(nn.Module):
         if type(blk_types[0]) == str:
             blk_types = [blk_types for _ in range(num_blocks)]
         assert len(blk_types) == num_blocks, "blk_types must be the same length as num_blocks"
-        self.model = U_Net(128, 128, embed_dim, 1, num_blocks=num_blocks, blk_types=blk_types, cond_dim=cond_embed_dim, t_dim=t_embed_dim, c_dim=1024).to(self.device)
+        self.model = U_Net(128, 128, embed_dim, 1, num_blocks=num_blocks, blk_types=blk_types, cond_dim=cond_embed_dim, t_dim=t_embed_dim, c_dim=text_dim).to(self.device)
         
         # Diffusion model utility class
-        self.diffusion_utils = Diffusion_Utils(t_embed_dim, scheduler_type=noise_scheduler_type)
+        self.diffusion_utils = Diffusion_Utils(t_embed_dim, scheduler_type=noise_scheduler_type, prediction_strategy=prediction_strategy)
         
         # Paramater counts
         print("U-Net model has {} parameters".format(sum(p.numel() for p in self.parameters() if p.requires_grad)))
@@ -246,6 +309,11 @@ class Model(nn.Module):
     #   masks_cond - (optional) Batch of masks for each c value
     #       of shape (N, 1, T2)
     def forward(self, audio_super, conditional=None, positional_embeddings=None, text=None, masks=None, masks_cond=None):
+        # Encode the text data
+        # CLIP output is of shape (N, 77, 1024)
+        # T5 output is of shape (N, 15, 768)
+        text = self.text_encoder[0].encode(text)
+        
         audio_super = audio_super.to(self.device)
         if type(conditional) == torch.Tensor:
             conditional = conditional.to(self.device)
@@ -287,9 +355,6 @@ class Model(nn.Module):
         # Ensure one channel
         conditionals = conditionals.mean(dim=0, keepdim=True)
         
-        # Encode the text data
-        text = self.CLIP[0].encode(text)
-        
         # Pass the data through the encodec
         # conditionals = [self.process_data(c)[0] for c in conditionals]
         conditionals, _ = self.process_data(conditionals)
@@ -306,7 +371,7 @@ class Model(nn.Module):
         conditionals = conditionals.to(self.device)
         
         # Get prediction
-        pred = self.diffusion_utils.sample_data(self.model, unstylized, num_steps=num_steps, cond=conditionals, context=text)
+        pred = self.diffusion_utils.dpm_sample_data(self, unstylized, num_steps=num_steps, cond=conditionals, context=text, order="first")
         # pred *= self.scale
         
         # Decode the audio

@@ -165,11 +165,6 @@ class Trainer():
                     text = [x[2] for x in batch]
                     conditional_audio = [x[3] if type(x[3]) is not type(None) else torch.zeros(1, 24000) for x in batch]
                     
-                    # Encode text using CLIP (N, 77, 1024)
-                    # text = self.CLIP.encode_text(self.CLIP_tok(text).to(self.device)).float().to(self.device)
-                    # text = self.process_CLIP(text)
-                    text = model_ref.CLIP[0].encode(text)
-                    
                     # Max lengths for each type of audio
                     stylized_max_length = max([x.shape[1] for x in stylized_audio])
                     if not model_ref.use_noise:
@@ -284,7 +279,7 @@ class Trainer():
                     
                 # Forward pass to get the predicted unstylized audio
                 # from the interpolated audio
-                stylized_pred = self.model(audio_super, conditional if conditional_audio is not None else None, positional_embeddings, text, masks_stylized, masks_conditional)
+                model_pred = self.model(audio_super, conditional if conditional_audio is not None else None, positional_embeddings, text, masks_stylized, masks_conditional)
                 
                 
                 
@@ -294,25 +289,25 @@ class Trainer():
                 #     # positional_embeddings = positional_embeddings * 10_000
                 #     comb_sum = masks_stylized[0].sum()
                 #     cond_sum = masks_conditional[0].sum()
-                #     stylized_pred = self.model.eval()(audio_super.clone(), conditional.clone() if conditional_audio is not None else None, positional_embeddings.clone(), text.clone(), masks_stylized.clone(), masks_conditional.clone())
+                #     model_pred = self.model.eval()(audio_super.clone(), conditional.clone() if conditional_audio is not None else None, positional_embeddings.clone(), text.copy(), masks_stylized.clone(), masks_conditional.clone())
                 #     # stylized_pred = stylized_pred[:1, :, :comb_sum]
-                #     stylized_pred *= self.scale
+                #     model_pred *= model_ref.scale
                     
-                #     stylized_pred_ = self.model.eval()(audio_super[:1, :, :comb_sum], conditional[:1, :, :cond_sum] if conditional_audio is not None else None, positional_embeddings[:1], text[:1])
-                #     stylized_pred_ *= self.scale
+                #     model_pred_ = self.model.eval()(audio_super[:1, :, :comb_sum], conditional[:1, :, :cond_sum] if conditional_audio is not None else None, positional_embeddings[:1], text[:1].copy())
+                #     model_pred_ *= model_ref.scale
                     
-                #     diff = ((stylized_pred[0, :, :stylized_pred_.shape[-1]] - stylized_pred_)**2).mean()
-                #     max_ = ((stylized_pred[0, :, :stylized_pred_.shape[-1]] - stylized_pred_)**2).max()
+                #     diff = ((model_pred[0, :, :model_pred_.shape[-1]] - model_pred_)**2).mean()
+                #     max_ = ((model_pred[0, :, :model_pred_.shape[-1]] - model_pred_)**2).max()
                 #     print()
                 
                 
-                # Compute loss
-                # We want the model to predict the stylized audio
-                # Note that we also need to account for the masked terms so
-                # the average doesn't get thrown off. With the mask, the
-                # average will be a lot lower for shorter sequences.
-                # loss = loss_fn(stylized, stylized_pred)
-                loss = (((stylized-stylized_pred)**2).flatten(1, -1).sum(1)/(masks_stylized.squeeze(1).sum(1)*stylized.shape[1])).mean() \
+                # Compute loss depending on the prediction strategy
+                if model_ref.prediction_strategy == "audio":
+                    loss = ((stylized-model_pred)**2)
+                elif model_ref.prediction_strategy == "noise":
+                    loss = ((unstylized-model_pred)**2)
+                # Mask loss so model isn't biased
+                loss = (loss.flatten(1, -1).sum(1)/(masks_stylized.squeeze(1).sum(1)*stylized.shape[1])).mean() \
                     / self.accumulation_steps
                 
                 # Backward pass
@@ -397,11 +392,10 @@ class Trainer():
                 
                 # # Free memory except on last batch
                 # if batch_num != len(dataloader)-1:
-                del stylized, unstylized, conditional, masks_stylized, masks_conditional, stylized_pred, audio_super, positional_embeddings, timesteps, text
+                del stylized, unstylized, conditional, masks_stylized, masks_conditional, model_pred, audio_super, positional_embeddings, timesteps, text
                 if not model_ref.use_noise:
                     del masks_unstylized
-                if is_main_process():
-                    torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
                 
             if is_main_process():
                 print(f"Epoch: {epoch} | Batch Loss: {batch_loss/len(self.dataloader)}")

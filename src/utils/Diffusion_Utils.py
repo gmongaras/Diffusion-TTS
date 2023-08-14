@@ -84,8 +84,8 @@ class Diffusion_Utils:
     # Given data at timestep 0 and timestep 1, diffusion the data
     # as an interpolation between the two timesteps according to the scheduler
     # t - betach of floating point value between 0 and 1 of shape (N)
-    # x_0 - batch of data at timestep 0 (posterior) of shape (N, C, T)
-    # x_1 - batch of data at timestep 1 (prior) of shape (N, C, T)
+    # x_0 - batch of data at timestep 0 (posterior) (audio) of shape (N, C, T)
+    # x_1 - batch of data at timestep 1 (prior) (noise) of shape (N, C, T)
     # NOTE: The forward noising equation is x_t = sqrt(gammas)*x_0 + sqrt(1-gammas)*x_1
     def diffuse_data(self, t, x_0, x_1):
         # Compute the gamma values for each timestep
@@ -151,13 +151,20 @@ class Diffusion_Utils:
             
             # Predict the human speech x_0 (posterior)
             positional_encodings = self.t_to_positional_embeddings(t.squeeze(1, -1))
-            x_0_pred = model(x_t/1, cond, positional_encodings, context)*1
+            model_pred = model(x_t/1, cond, positional_encodings, context)*1
+            
+            # Audio prediction
+            if self.prediction_strategy == "audio":
+                audio_pred = model_pred
+            elif self.prediction_strategy == "noise":
+                gammas_t = self.scheduler(t).reshape(-1, 1, 1)
+                audio_pred = (x_t - torch.sqrt(1-gammas_t)*model_pred)/torch.sqrt(gammas_t)
             
             # Take DDIM step on the predicted x_1 prior
             # x_t = self.take_ddim_step(x_t, x_0_pred, t, t_next, torch.all(step==0))
             
             # Take Cold Diffusion step on the predicted x_0 posterior
-            x_t = self.take_cold_diffusion_step(x_t, x_0_pred, t, t_next)
+            x_t = self.take_cold_diffusion_step(x_t, audio_pred, t, t_next)
             
         # ### Final prediction
         # step = num_steps
@@ -172,7 +179,7 @@ class Diffusion_Utils:
         # positional_encodings = self.t_to_positional_embeddings(t.squeeze(1, -1))
         # x_0_pred = model(x_t, cond, positional_encodings)
         
-        return x_0_pred
+        return x_t
     
     
     

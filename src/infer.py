@@ -6,15 +6,16 @@ from src.Model import Model
 
 
 def infer():
-    checkpoint_path = "checkpoints/step_132000/"
+    # checkpoint_path = "checkpoints/step_132000/"
+    checkpoint_path = "checkpoints_noise_cosine/step_15000"
     text = 'I wanted to know more about the subject, so I asked about it.'
     # text = 'Her mother played on the piano and the young lady on the violin.'
     condition_paths = ["audio_stylized_speaker/6746/1.wav", "audio_stylized_speaker/6746/2.wav"]
     # condition_paths = ["my_voice/my_voice_1.wav", "my_voice/my_voice_2.wav"]
     num_steps = 25
     outfile = "output.wav"
-    device = torch.device("cuda:0")
-    # device = torch.device("cpu")
+    # device = torch.device("cuda:0")
+    device = torch.device("cpu")
     
     
     

@@ -23,29 +23,27 @@ def train():
     cond_embed_dim = 128
     num_blocks = 3
     blk_types = [
-        ["res", "cond3", "ctx", "res"],
-        ["res", "atn", "cond3", "ctx", "res"],
-        ["res", "atn", "cond3", "ctx", "res"],
+        ["res", "res", "cond3", "ctx"],
+        ["res", "atn", "res", "cond3", "ctx"],
+        ["res", "atn", "res", "cond3", "ctx"],
     ]
     use_noise = True
-    noise_scheduler_type = "cosine"
+    noise_scheduler_type = "linear"
     prediction_strategy = "noise"               # "noise" to predict noise, "audio" to predict stylized audio
     text_encoder_type = "T5"                    # CLIP or T5
     
     # Training params
     batch_size = 16#64
-    lr = 1e-4
+    lr = 2e-4
     save_every_steps = 5000
-    accumulation_steps = 2
+    accumulation_steps = 4
     use_scheduler = True
-    sample_dir = "audio_samples_noise"
-    checkpoints_dir = "checkpoints_noise"
-    # sample_dir = "del_"
-    # checkpoints_dir = "del_"
+    sample_dir = "audio_samples_noise_MN"
+    checkpoints_dir = "checkpoints_noise_MN"
     
     # Loading params
-    pretrained_checkpoint_path = "checkpoints_noise/step_20000/"
-    # pretrained_checkpoint_path = None
+    # pretrained_checkpoint_path = "checkpoints_noise/step_20000/"
+    pretrained_checkpoint_path = None
     
     
     

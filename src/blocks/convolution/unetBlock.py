@@ -55,11 +55,12 @@ class unetBlock(nn.Module):
             elif blk == "cond2":
                 blocks.append(ConditionalBlock2(cond_dim, curCh))
             elif blk == "cond3":
-                blocks.append(ContextBlock(curCh, cond_dim, name="cond"))
+                blocks.append(ContextBlock(curCh, cond_dim, name="cond", num_heads=8, norm_type="middle_norm"))
             elif blk == "atn":
-                blocks.append(MultiHeadAttention(curCh, 8, norm_type="post_norm"))
+                blocks.append(MultiHeadAttention(curCh, 8, norm_type="middle_norm"))
             elif blk == "ctx":
-                blocks.append(ContextBlock(curCh, c_dim, name="text_context"))
+                # CTX block needs to be post norm
+                blocks.append(ContextBlock(curCh, c_dim, name="text_context", num_heads=8, norm_type="post_norm"))
 
             curCh = curCh1
 

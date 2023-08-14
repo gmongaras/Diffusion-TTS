@@ -109,7 +109,8 @@ class FrozenT5Embedder(AbstractEncoder):
                 cache_dir="./T5_weights",
                 padding=True,
                 padding_strategy="longest",
-                use_fast=True)
+                use_fast=True,
+                model_max_length=512)
         self.model = T5EncoderModel.from_pretrained("t5-base",
                 cache_dir="./T5_weights",
                 output_hidden_states=True)
@@ -371,6 +372,7 @@ class Model(nn.Module):
         conditionals = conditionals.to(self.device)
         
         # Get prediction
+        # pred = self.diffusion_utils.sample_data(self, unstylized, num_steps=num_steps, cond=conditionals, context=text)
         pred = self.diffusion_utils.dpm_sample_data(self, unstylized, num_steps=num_steps, cond=conditionals, context=text, order="first")
         # pred *= self.scale
         

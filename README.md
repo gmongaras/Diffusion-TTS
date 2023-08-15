@@ -69,6 +69,15 @@ For each epoch:
 - Encodec - https://arxiv.org/abs/2210.13438
 - MusicGen - https://arxiv.org/abs/2306.05284
 
+Papers for samplers:
+- Main paper: https://arxiv.org/pdf/2206.00927.pdf
+- Improvement: https://arxiv.org/pdf/2211.01095.pdf
+- Reference (notation): https://arxiv.org/pdf/2006.11239.pdf
+
+Schedulers:
+- Main paper: https://arxiv.org/pdf/2301.10972.pdf
+- Perhaps this can imporve the schedulers: https://arxiv.org/pdf/2305.08891.pdf
+
 
 
 

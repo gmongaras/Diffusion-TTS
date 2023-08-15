@@ -124,7 +124,8 @@ class FrozenT5Embedder(AbstractEncoder):
         
     def forward(self, text):
         text = self.tokenizer(text, return_tensors="pt", padding="longest")
-        return self.model(input_ids=text["input_ids"].to(self.model.device), attention_mask=text["attention_mask"].to(self.model.device)).last_hidden_state
+        return self.model(input_ids=text["input_ids"].to(self.model.device), attention_mask=text["attention_mask"].to(self.model.device)).last_hidden_state,\
+            text["attention_mask"].unsqueeze(1).bool()
         
     def encode(self, text):
         # Ouput shape: (N, T, 768)
@@ -313,7 +314,7 @@ class Model(nn.Module):
         # Encode the text data
         # CLIP output is of shape (N, 77, 1024)
         # T5 output is of shape (N, 15, 768)
-        text = self.text_encoder[0].encode(text)
+        text, masks_context = self.text_encoder[0].encode(text)
         
         audio_super = audio_super.to(self.device)
         if type(conditional) == torch.Tensor:
@@ -326,8 +327,10 @@ class Model(nn.Module):
             masks = masks.to(self.device)
         if type(masks_cond) == torch.Tensor:
             masks_cond = masks_cond.to(self.device)
+        if type(masks_context) == torch.Tensor:
+            masks_context = masks_context.to(self.device)
             
-        return self.model(audio_super, conditional, positional_embeddings, text, masks, masks_cond)
+        return self.model(audio_super, conditional, positional_embeddings, text, masks, masks_cond, masks_context)
             
             
             

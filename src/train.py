@@ -22,10 +22,15 @@ def train():
     t_embed_dim = 256
     cond_embed_dim = 128
     num_blocks = 3
+    # blk_types = [
+    #     ["res", "res", "cond3", "ctx"],
+    #     ["res", "atn", "res", "cond3", "ctx"],
+    #     ["res", "atn", "res", "cond3", "ctx"],
+    # ]
     blk_types = [
-        ["res", "res", "cond3", "ctx"],
-        ["res", "atn", "res", "cond3", "ctx"],
-        ["res", "atn", "res", "cond3", "ctx"],
+        ["res", "fullctx"],
+        ["res", "fullctx"],
+        ["res", "fullctx"],
     ]
     use_noise = True
     noise_scheduler_type = "linear"
@@ -38,8 +43,8 @@ def train():
     save_every_steps = 5000
     accumulation_steps = 4
     use_scheduler = True
-    sample_dir = "audio_samples_noise_MN"
-    checkpoints_dir = "checkpoints_noise_MN"
+    sample_dir = "audio_samples_noise_fullctx"
+    checkpoints_dir = "checkpoints_noise_fullctx"
     
     # Loading params
     # pretrained_checkpoint_path = "checkpoints_noise/step_20000/"

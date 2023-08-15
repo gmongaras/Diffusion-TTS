@@ -1,12 +1,10 @@
 from torch import nn
-from .convNext import convNext
-from .Efficient_Channel_Attention import Efficient_Channel_Attention
-from .clsAttn import clsAttn, clsAttn_Linear, Efficient_Cls_Attention
 from .wideResNet import ResnetBlock
 from .MultiHeadAttention import MultiHeadAttention
 from .ConditionalBlock import ConditionalBlock
 from .ConditionalBlock2 import ConditionalBlock2
 from .ContextBlock import ContextBlock
+from .FullContextBlock import FullContextBlock
 
 
 
@@ -55,12 +53,15 @@ class unetBlock(nn.Module):
             elif blk == "cond2":
                 blocks.append(ConditionalBlock2(cond_dim, curCh))
             elif blk == "cond3":
-                blocks.append(ContextBlock(curCh, cond_dim, name="cond", num_heads=8, norm_type="middle_norm"))
+                # blocks.append(ContextBlock(curCh, cond_dim, name="cond", num_heads=8, norm_type="middle_norm"))
+                blocks.append(MultiHeadAttention(curCh, 8, norm_type="middle_norm", query_dim=curCh, key_dim=cond_dim, value_dim=cond_dim, name="cond"))
             elif blk == "atn":
-                blocks.append(MultiHeadAttention(curCh, 8, norm_type="middle_norm"))
+                blocks.append(MultiHeadAttention(curCh, 8, norm_type="middle_norm", name="atn"))
             elif blk == "ctx":
-                # CTX block needs to be post norm
-                blocks.append(ContextBlock(curCh, c_dim, name="text_context", num_heads=8, norm_type="post_norm"))
+                # blocks.append(ContextBlock(curCh, c_dim, name="text_context", num_heads=8, norm_type="post_norm"))
+                blocks.append(MultiHeadAttention(curCh, 8, norm_type="middle_norm", query_dim=curCh, key_dim=c_dim, value_dim=c_dim, name="ctx"))
+            elif blk == "fullctx":
+                blocks.append(FullContextBlock(curCh, cond_dim, c_dim, 8, norm_type="pre_norm"))
 
             curCh = curCh1
 
@@ -69,14 +70,15 @@ class unetBlock(nn.Module):
 
     # Input:
     #   X - Tensor of shape (N, inCh, T)
-    #   y - (optional) Tensor of shape (N, cond_dim, T)
+    #   y - (optional) Tensor of shape (N, cond_dim, T2)
     #   t - (optional) Tensor of shape (N, t_dim)
-    #   context - (optional) Tensor of shape (N, c_dim)
+    #   context - (optional) Tensor of shape (N, c_dim, T3)
     #   mask - (optional) Tensor of shape (N, 1, T)
-    #   mask_cond - (optional) Tensor of shape (N, 1, T)
+    #   mask_cond - (optional) Tensor of shape (N, 1, T2)
+    #   masks_context - (optional) Tensor of shape (N, 1, T3)
     # Output:
     #   Tensor of shape (N, outCh, L, W)
-    def forward(self, X, y=None, t=None, context=None, mask=None, mask_cond=None):
+    def forward(self, X, y=None, t=None, context=None, mask=None, mask_cond=None, mask_context=None):
         # Class assertion
         if y != None:
             assert self.useCls == True, \
@@ -87,11 +89,19 @@ class unetBlock(nn.Module):
                 X = b(X, t, mask)
             elif type(b) == ConditionalBlock or type(b) == ConditionalBlock2 or (type(b) == ContextBlock and b.name=="cond"):
                 X = b(X, y, mask, mask_cond)
-            elif type(b) == MultiHeadAttention:
-                X = b(X, X, X, mask, mask, mask, res=X)
-                # X = b(X.transpose(-1, -2), X.transpose(-1, -2), X.transpose(-1, -2))[0].transpose(-1, -2) 
             elif type(b) == ContextBlock:
-                X = b(X, context, mask, None)
+                X = b(X, context, mask, mask_context)
+                
+            elif (type(b) == MultiHeadAttention and b.name == "atn"):
+                X = b(X, X, X, mask, mask, mask, res=X)
+            elif (type(b) == MultiHeadAttention and b.name == "cond"):
+                X = b(X, y, y, mask, mask_cond, mask_cond, res=X)
+            elif (type(b) == MultiHeadAttention and b.name == "ctx"):
+                X = b(X, context, context, mask, mask_context, mask_context, res=X)
+                
+            elif type(b) == FullContextBlock:
+                X = b(X, y, context, mask, mask_cond, mask_context)
+
             else:
                 X = b(X)
         return X

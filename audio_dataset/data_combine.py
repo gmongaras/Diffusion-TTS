@@ -147,7 +147,7 @@ for root, dirs, files in os.walk(LibriTTS_dir):
                     if audio[:, i * (max_time * resample_rate) : (i + 1) * (max_time * resample_rate)].shape[1] < resample_rate:
                         continue
 
-                    torchaudio.save(f"{out_dir}/{speaker_id}/{file_num}.wav", audio[:, i * (max_time * resample_rate) : (i + 1)>
+                    torchaudio.save(f"{out_dir}/{speaker_id}/{file_num}.wav", audio[:, i * (max_time * resample_rate) : (i + 1)])
                     num_files += 1
 
                 continue

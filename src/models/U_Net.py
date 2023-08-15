@@ -122,12 +122,14 @@ class U_Net(nn.Module):
     #   t - (optional) Batch of encoded t values for each 
     #       X value of shape (N, t_dim)
     #   context - (optional) Batch of encoded context information. This
-    #             is the text conditioning information. Shape (N, c_dim)
+    #             is the text conditioning information. Shape (N, T3, c_dim)
     #   masks - (optional) Batch of masks for each X value
     #       of shape (N, 1, T)
     #   masks_cond - (optional) Batch of masks for each c value
     #       of shape (N, 1, T2)
-    def forward(self, X, y=None, t=None, context=None, masks=None, masks_cond=None):
+    #   masks_context - (optional) Batch of masks for each context value
+    #       of shape (N, 1, T3)
+    def forward(self, X, y=None, t=None, context=None, masks=None, masks_cond=None, masks_context=None):
         # conditional information assertion
         if type(y) != type(None):
             assert type(self.cond_dim) != type(None), "cond_dim must be specified when using condtional information."
@@ -159,7 +161,7 @@ class U_Net(nn.Module):
         b = 0
         while b < len(self.downBlocks):
             # Convoltuion blocks
-            X = self.downBlocks[b](X, y, t, context=context, mask=masks, mask_cond=masks_cond)
+            X = self.downBlocks[b](X, y, t, context=context, mask=masks, mask_cond=masks_cond, mask_context=masks_context)
             
             # Save residual from convolutions
             residuals.append(X.clone())
@@ -182,7 +184,7 @@ class U_Net(nn.Module):
         # through the intermediate blocks
         # return X
         for b in self.intermediate:
-            X = b(X, y=y, t=t, context=context, mask=masks, mask_cond=masks_cond)
+            X = b(X, y=y, t=t, context=context, mask=masks, mask_cond=masks_cond, mask_context=masks_context)
         
         # Send the intermediate batch through the upsampling
         # block to get the original shape
@@ -199,11 +201,11 @@ class U_Net(nn.Module):
                 
             # Other residual blocks
             if len(residuals) > 0:
-                X = self.upBlocks[b](torch.cat((X[:, :, :residuals[0].shape[-1]], residuals[0]), dim=1), y, t, context, masks, masks_cond)
+                X = self.upBlocks[b](torch.cat((X[:, :, :residuals[0].shape[-1]], residuals[0]), dim=1), y, t, context, masks, masks_cond, masks_context)
                 
             # Final residual block
             else:
-                X = self.upBlocks[b](X, y, t, context, masks, masks_cond)
+                X = self.upBlocks[b](X, y, t, context, masks, masks_cond, masks_context)
             b += 1
             residuals = residuals[1:]
         

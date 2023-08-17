@@ -6,7 +6,7 @@ import math
 try: # For distributed training
     from src.utils.SinusoidalPositionEmbeddings import SinusoidalPositionEmbeddings
 except ModuleNotFoundError:
-    from utils.SinusoidalPositionEmbeddings import SinusoidalPositionEmbeddings
+    from SinusoidalPositionEmbeddings import SinusoidalPositionEmbeddings
 
 
 

@@ -34,8 +34,9 @@ def train():
     ]
     use_noise = True
     noise_scheduler_type = "cosine"
-    prediction_strategy = "noise"               # "noise" to predict noise, "audio" to predict stylized audio
+    prediction_strategy = "audio"               # "noise" to predict noise, "audio" to predict stylized audio
     text_encoder_type = "T5"                    # CLIP or T5
+    optim_8bit = False
     
     # Training params
     batch_size = 14#64
@@ -43,11 +44,12 @@ def train():
     save_every_steps = 5000
     accumulation_steps = 4
     use_scheduler = True
-    sample_dir = "audio_samples_noise_fullctx2"
-    checkpoints_dir = "checkpoints_noise_fullctx2"
+    sample_dir = "audio_samples_audio"
+    checkpoints_dir = "checkpoints_audio"
+    use_amp = True
     
     # Loading params
-    # pretrained_checkpoint_path = "checkpoints_noise/step_20000/"
+    # pretrained_checkpoint_path = "checkpoints_noise_fullctx2/step_65000/"
     pretrained_checkpoint_path = None
     
     
@@ -71,6 +73,7 @@ def train():
                   text_encoder_type=text_encoder_type,
                   device=device,
                   use_noise=use_noise, 
+                  optim_8bit=optim_8bit,
             )
     
     # Load in the checkpoint
@@ -99,7 +102,9 @@ def train():
         sample_dir=sample_dir, 
         checkpoints_dir=checkpoints_dir, 
         optimizer_checkpoint=optimizer_checkpoint, 
-        scheduler_checkpoint=scheduler_checkpoint)
+        scheduler_checkpoint=scheduler_checkpoint,
+        use_amp=use_amp,
+    )
     trainer.train(epoch_ckpt, step_ckpt)
     # model.train_model()
     

@@ -7,10 +7,14 @@ import json
 from transformers import EncodecModel, AutoProcessor
 from TTS.api import TTS
 import open_clip
+from bitsandbytes.optim import AdamW8bit
 
 try: # For distributed training
+    import sys
+    sys.path.append('src/utils')
+    
     from models.U_Net import U_Net
-    from utils.Diffusion_Utils import Diffusion_Utils
+    from Diffusion_Utils import Diffusion_Utils
 except ModuleNotFoundError:
     from src.models.U_Net import U_Net
     from src.utils.Diffusion_Utils import Diffusion_Utils
@@ -146,7 +150,9 @@ class Model(nn.Module):
             prediction_strategy="noise",        # Type of prediction strategy
             text_encoder_type="CLIP",           # Type of text encoder (T5, CLIP)
             use_noise=False,                    # True to use a noise prior, False to use a TTS prior
-            device="cpu"):                      # Device to use (cpu or gpu)
+            device="cpu",                       # Device to use (cpu or gpu)
+            optim_8bit=True,                    # True to use 8-bit optimizer, False to use 32-bit optimizer
+        ):
         super(Model, self).__init__()
         
         self.device = device
@@ -155,6 +161,7 @@ class Model(nn.Module):
         self.text_encoder_type = text_encoder_type
         self.sampling_rate = 24_000
         self.scale = 1
+        self.optim_8bit = optim_8bit
         
         self.embed_dim = embed_dim
         self.t_embed_dim = t_embed_dim
@@ -173,6 +180,7 @@ class Model(nn.Module):
             "prediction_strategy": prediction_strategy,
             "text_encoder_type": text_encoder_type,
             "use_noise": use_noise,
+            "optim_8bit": optim_8bit,
         }
         
         # Convert the device to a torch device
@@ -406,7 +414,10 @@ class Model(nn.Module):
         self.eval()
         
         # Load in the optimizer
-        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-4)
+        if self.defaults["optim_8bit"] == True:
+            optimizer = AdamW8bit(self.model.parameters(), lr=1e-4)
+        else:
+            optimizer = torch.optim.AdamW(self.parameters(), lr=1e-4)
         try:
             optimizer.load_state_dict(torch.load(path + "/optimizer.pth", map_location=self.device))
         except:
@@ -414,11 +425,14 @@ class Model(nn.Module):
             optimizer = None
         
         # Load in the scheduler
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=1e-6)
-        try:
-            scheduler.load_state_dict(torch.load(path + "/scheduler.pth", map_location=self.device))
-        except:
-            print("Scheduler checkpoint not found")
+        if type(optimizer) is not type(None):
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=1e-6)
+            try:
+                scheduler.load_state_dict(torch.load(path + "/scheduler.pth", map_location=self.device))
+            except:
+                print("Scheduler checkpoint not found")
+                scheduler = None
+        else:
             scheduler = None
         
         return optimizer, scheduler, epoch, step

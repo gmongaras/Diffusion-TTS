@@ -4,6 +4,9 @@ import os
 from tqdm import tqdm
 import json
 
+from bitsandbytes.optim import AdamW8bit
+from contextlib import nullcontext
+
 
 
 
@@ -16,7 +19,10 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data.dataloader import DataLoader
 
 try:
-    from utils.multi_gpu_helpers import is_main_process
+    import sys
+    sys.path.append('src/utils')
+
+    from multi_gpu_helpers import is_main_process
 except ModuleNotFoundError:
     from src.utils.multi_gpu_helpers import is_main_process
 
@@ -69,7 +75,7 @@ def collate_fn(batch):
     
     
 class Trainer():
-    def __init__(self, model, dataset, dev="cpu", batch_size=32, num_workers=0, prefetch_factor=1, lr=1e-3, save_every_steps=1000, use_scheduler=True, sample_dir="audio_samples", checkpoints_dir="checkpoints", accumulation_steps=1, optimizer_checkpoint=None, scheduler_checkpoint=None):
+    def __init__(self, model, dataset, dev="cpu", batch_size=32, num_workers=0, prefetch_factor=1, lr=1e-3, save_every_steps=1000, use_scheduler=True, sample_dir="audio_samples", checkpoints_dir="checkpoints", accumulation_steps=1, optimizer_checkpoint=None, scheduler_checkpoint=None, use_amp=True):
         self.model = model
         self.dev = dev
         self.lr = lr
@@ -80,6 +86,7 @@ class Trainer():
         self.accumulation_steps = accumulation_steps
         self.optimizer_checkpoint = optimizer_checkpoint
         self.scheduler_checkpoint = scheduler_checkpoint
+        self.use_amp = use_amp
         
         
         
@@ -92,6 +99,7 @@ class Trainer():
                 local_rank = int(os.environ['LOCAL_RANK'])
             except KeyError:
                 local_rank = 0
+                print("LOCAL_RANK not found in environment variables. Defaulting to 0.")
 
             self.model = DDP(self.model.cuda(), device_ids=[local_rank], find_unused_parameters=False)
         else:
@@ -130,14 +138,26 @@ class Trainer():
             epoch_ckpt = 0
         if step_ckpt is None:
             step_ckpt = 1
+            
+        # Model reference is different depending on the device
+        if self.dev == "cpu":
+            model_ref = self.model
+        else:
+            model_ref = self.model.module
         
         # Optimzer
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr) if self.optimizer_checkpoint is None else self.optimizer_checkpoint
+        if model_ref.optim_8bit == True:
+            optimizer = AdamW8bit(self.model.parameters(), lr=self.lr, eps=1e-7 if self.use_amp else 1e-8) if self.optimizer_checkpoint is None else self.optimizer_checkpoint
+        else:
+            optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr, eps=1e-7 if self.use_amp else 1e-8) if self.optimizer_checkpoint is None else self.optimizer_checkpoint
         
         # Cosine annealing scheduler with warm restarts
         scheduler = None
         if self.use_scheduler:
             scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=1e-6) if self.scheduler_checkpoint is None else self.scheduler_checkpoint
+        
+        if self.use_amp:
+            grad_scaler = torch.cuda.amp.GradScaler()
         
         num_steps = step_ckpt
         for epoch in range(epoch_ckpt, 10000):
@@ -276,55 +296,58 @@ class Trainer():
                     
                     
                     
+                with torch.autocast(device_type='cuda', dtype=torch.bfloat16) if self.use_amp else nullcontext():
+                    # Forward pass to get the predicted unstylized audio
+                    # from the interpolated audio
+                    model_pred = self.model(audio_super, conditional if conditional_audio is not None else None, positional_embeddings, text, masks_stylized, masks_conditional)
                     
-                # Forward pass to get the predicted unstylized audio
-                # from the interpolated audio
-                model_pred = self.model(audio_super, conditional if conditional_audio is not None else None, positional_embeddings, text, masks_stylized, masks_conditional)
-                
-                
-                
-                # # Tests
-                # with torch.no_grad():
-                #     # audio_super = audio_super * 10_000
-                #     # positional_embeddings = positional_embeddings * 10_000
-                #     comb_sum = masks_stylized[0].sum()
-                #     cond_sum = masks_conditional[0].sum()
-                #     model_pred = self.model.eval()(audio_super.clone(), conditional.clone() if conditional_audio is not None else None, positional_embeddings.clone(), text.copy(), masks_stylized.clone(), masks_conditional.clone())
-                #     # stylized_pred = stylized_pred[:1, :, :comb_sum]
-                #     model_pred *= model_ref.scale
                     
-                #     model_pred_ = self.model.eval()(audio_super[:1, :, :comb_sum], conditional[:1, :, :cond_sum] if conditional_audio is not None else None, positional_embeddings[:1], text[:1].copy())
-                #     model_pred_ *= model_ref.scale
                     
-                #     diff = ((model_pred[0, :, :model_pred_.shape[-1]] - model_pred_)**2).mean()
-                #     max_ = ((model_pred[0, :, :model_pred_.shape[-1]] - model_pred_)**2).max()
-                #     print()
-                
-                
-                # Compute loss depending on the prediction strategy
-                if model_ref.prediction_strategy == "audio":
-                    loss = ((stylized-model_pred)**2)
-                elif model_ref.prediction_strategy == "noise":
-                    loss = ((unstylized-model_pred)**2)
-                # Mask loss so model isn't biased
-                loss = (loss.flatten(1, -1).sum(1)/(masks_stylized.squeeze(1).sum(1)*stylized.shape[1])).mean() \
-                    / self.accumulation_steps
-                
-                # Backward pass
-                loss.backward()
-                   
-                # Update model every accumulation_steps 
-                if num_steps % self.accumulation_steps == 0:
-                    optimizer.step()
-                    if self.use_scheduler:
-                        scheduler.step(epoch + batch_num / len(self.dataloader))
-                    optimizer.zero_grad()
-                
-                if num_steps < self.save_every_steps and is_main_process():
-                    print(f"Step: {num_steps} | Loss: {loss.item()}")
-                
-                batch_loss += loss.item()
-                num_steps += 1
+                    # # Tests
+                    # with torch.no_grad():
+                    #     # audio_super = audio_super * 10_000
+                    #     # positional_embeddings = positional_embeddings * 10_000
+                    #     comb_sum = masks_stylized[0].sum()
+                    #     cond_sum = masks_conditional[0].sum()
+                    #     model_pred = self.model.eval()(audio_super.clone(), conditional.clone() if conditional_audio is not None else None, positional_embeddings.clone(), text.copy(), masks_stylized.clone(), masks_conditional.clone())
+                    #     # stylized_pred = stylized_pred[:1, :, :comb_sum]
+                    #     model_pred *= model_ref.scale
+                        
+                    #     model_pred_ = self.model.eval()(audio_super[:1, :, :comb_sum], conditional[:1, :, :cond_sum] if conditional_audio is not None else None, positional_embeddings[:1], text[:1].copy())
+                    #     model_pred_ *= model_ref.scale
+                        
+                    #     diff = ((model_pred[0, :, :model_pred_.shape[-1]] - model_pred_)**2).mean()
+                    #     max_ = ((model_pred[0, :, :model_pred_.shape[-1]] - model_pred_)**2).max()
+                    #     print()
+                    
+                    
+                    # Compute loss depending on the prediction strategy
+                    if model_ref.prediction_strategy == "audio":
+                        loss = ((stylized-model_pred)**2)
+                    elif model_ref.prediction_strategy == "noise":
+                        loss = ((unstylized-model_pred)**2)
+                    # Mask loss so model isn't biased
+                    loss = (loss.flatten(1, -1).sum(1)/(masks_stylized.squeeze(1).sum(1)*stylized.shape[1])).mean() \
+                        / self.accumulation_steps
+                    
+                    # Backward pass
+                    if self.use_amp:
+                        grad_scaler.scale(loss).backward()
+                    else:
+                        loss.backward()
+                    
+                    # Update model every accumulation_steps 
+                    if num_steps % self.accumulation_steps == 0:
+                        optimizer.step()
+                        if self.use_scheduler:
+                            scheduler.step(epoch + batch_num / len(self.dataloader))
+                        optimizer.zero_grad()
+                    
+                    if num_steps-step_ckpt < self.save_every_steps and is_main_process():
+                        print(f"Step: {num_steps} | Loss: {loss.item()}")
+                    
+                    batch_loss += loss.item()
+                    num_steps += 1
                 
                 
                 

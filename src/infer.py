@@ -14,8 +14,8 @@ def infer():
     # condition_paths = ["my_voice/my_voice_1.wav", "my_voice/my_voice_2.wav"]
     num_steps = 25
     outfile = "output.wav"
-    # device = torch.device("cuda:0")
-    device = torch.device("cpu")
+    device = torch.device("cuda:0")
+    # device = torch.device("cpu")
     
     
     

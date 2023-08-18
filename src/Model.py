@@ -7,7 +7,7 @@ import json
 from transformers import EncodecModel, AutoProcessor
 from TTS.api import TTS
 import open_clip
-from bitsandbytes.optim import AdamW8bit
+# from bitsandbytes.optim import AdamW8bit
 
 try: # For distributed training
     import sys

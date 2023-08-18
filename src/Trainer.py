@@ -3,8 +3,9 @@ import torchaudio
 import os
 from tqdm import tqdm
 import json
+import pytorch_warmup as warmup
 
-from bitsandbytes.optim import AdamW8bit
+# from bitsandbytes.optim import AdamW8bit
 from contextlib import nullcontext
 
 
@@ -101,7 +102,7 @@ class Trainer():
                 local_rank = 0
                 print("LOCAL_RANK not found in environment variables. Defaulting to 0.")
 
-            self.model = DDP(self.model.cuda(), device_ids=[local_rank], find_unused_parameters=False)
+            self.model = DDP(self.model, device_ids=[local_rank], find_unused_parameters=False).cuda()
         else:
             self.model = self.model.cpu()
         
@@ -142,8 +143,14 @@ class Trainer():
         # Model reference is different depending on the device
         if self.dev == "cpu":
             model_ref = self.model
+            
+            # World size is 1 if not distributed
+            world_size = 1
         else:
             model_ref = self.model.module
+            
+            # Get world size
+            world_size = int(os.environ['WORLD_SIZE'])
         
         # Optimzer
         if model_ref.optim_8bit == True:
@@ -155,6 +162,9 @@ class Trainer():
         scheduler = None
         if self.use_scheduler:
             scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=1e-6) if self.scheduler_checkpoint is None else self.scheduler_checkpoint
+            # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=10000*len(self.dataloader), eta_min=1e-6) if self.scheduler_checkpoint is None else self.scheduler_checkpoint
+            # https://github.com/Tony-Y/pytorch_warmup
+            warmup_scheduler = warmup.LinearWarmup(optimizer, warmup_period=100)
         
         if self.use_amp:
             grad_scaler = torch.cuda.amp.GradScaler()
@@ -329,7 +339,7 @@ class Trainer():
                     # Mask loss so model isn't biased
                     loss = (loss.flatten(1, -1).sum(1)/(masks_stylized.squeeze(1).sum(1)*stylized.shape[1])).mean() \
                         / self.accumulation_steps
-                    
+                        
                     # Backward pass
                     if self.use_amp:
                         grad_scaler.scale(loss).backward()
@@ -338,13 +348,20 @@ class Trainer():
                     
                     # Update model every accumulation_steps 
                     if num_steps % self.accumulation_steps == 0:
-                        optimizer.step()
+                        if self.use_amp:
+                            grad_scaler.step(optimizer)
+                        else:
+                            optimizer.step()
                         if self.use_scheduler:
-                            scheduler.step(epoch + batch_num / len(self.dataloader))
+                            with warmup_scheduler.dampening():
+                                # scheduler.step()
+                                scheduler.step(epoch + batch_num / len(self.dataloader))
+                        if self.use_amp:
+                            grad_scaler.update()
                         optimizer.zero_grad()
                     
                     if num_steps-step_ckpt < self.save_every_steps and is_main_process():
-                        print(f"Step: {num_steps} | Loss: {loss.item()}")
+                        print(f"Step: {num_steps} | Loss: {loss.item()/world_size}")
                     
                     batch_loss += loss.item()
                     num_steps += 1
@@ -358,7 +375,7 @@ class Trainer():
                 # Save audio samples
                 if num_steps % self.save_every_steps == 0 and is_main_process():
                     with torch.no_grad():
-                        print(f"Step: {num_steps} | Loss: {batch_loss / batch_num}")
+                        print(f"Step: {num_steps} | Loss: {batch_loss / batch_num / world_size}")
                         
                         ## Audio samples
                         if not os.path.exists(f"{self.sample_dir}/step_{num_steps}"):
@@ -418,7 +435,7 @@ class Trainer():
                 del stylized, unstylized, conditional, masks_stylized, masks_conditional, model_pred, audio_super, positional_embeddings, timesteps, text
                 if not model_ref.use_noise:
                     del masks_unstylized
-                torch.cuda.empty_cache()
+                # torch.cuda.empty_cache()
                 
             if is_main_process():
-                print(f"Epoch: {epoch} | Batch Loss: {batch_loss/len(self.dataloader)}")
+                print(f"Epoch: {epoch} | Batch Loss: {batch_loss/len(self.dataloader)/world_size}")

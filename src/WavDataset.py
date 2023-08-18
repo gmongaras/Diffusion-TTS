@@ -5,17 +5,19 @@ from torch.utils.data import Dataset
 from TTS.api import TTS
 import random
 import contextlib
+import librosa
 
 
 
 
 class WavDataset(Dataset):
     @torch.no_grad()
-    def __init__(self, root_dir, load_in_memory=False, use_noise=False, limit=-1):
+    def __init__(self, root_dir, augment_audio=True, load_in_memory=False, use_noise=False, limit=-1):
         if limit == None:
             limit = -1
         self.load_in_memory = load_in_memory
         self.use_noise = use_noise
+        self.augment_audio = augment_audio
         
         # List of all data as a three part tuple:
         # (wav file, text file, tts output)
@@ -78,6 +80,19 @@ class WavDataset(Dataset):
         return self.total
     
     @torch.no_grad()
+    def augment(self, audio):
+        # # Augment to a random pitch factor between -2 and 2
+        # pitch_factor = random.uniform(-2, 2)
+        # from torch_pitch_shift import pitch_shift
+        # # audio = torchaudio.transforms.PitchShift(24000, pitch_factor)(audio)
+        # audio = pitch_shift(audio.unsqueeze(0), pitch_factor, 24_000).squeeze(0)
+        # Augment to a random speed factor between 0.9 and 1.1
+        rate = random.uniform(0.9, 1.1)
+        audio = torch.tensor(librosa.effects.time_stretch(audio.numpy(), rate=rate))
+        
+        return audio
+    
+    @torch.no_grad()
     def load_item(self, idx, only_wav=False):
         # Get the data entry
         data = self.data[idx]
@@ -99,6 +114,10 @@ class WavDataset(Dataset):
             # Resample
             if sample_rate != 24000:
                 waveform = torchaudio.transforms.Resample(sample_rate, 24000)(waveform)
+                
+            # # Augment the audio
+            # if self.augment_audio:
+            #     waveform = self.augment(waveform)
             
             if only_wav:
                 return waveform

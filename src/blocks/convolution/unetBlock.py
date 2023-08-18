@@ -61,7 +61,7 @@ class unetBlock(nn.Module):
                 # blocks.append(ContextBlock(curCh, c_dim, name="text_context", num_heads=8, norm_type="post_norm"))
                 blocks.append(MultiHeadAttention(curCh, 8, norm_type="middle_norm", query_dim=curCh, key_dim=c_dim, value_dim=c_dim, name="ctx"))
             elif blk == "fullctx":
-                blocks.append(FullContextBlock(curCh, cond_dim, c_dim, 8, norm_type="pre_norm"))
+                blocks.append(FullContextBlock(curCh, cond_dim, c_dim, 8, norm_type="middle_norm"))
 
             curCh = curCh1
 

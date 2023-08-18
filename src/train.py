@@ -11,15 +11,16 @@ except ModuleNotFoundError:
 
 def train():
     # Data params
-    data_path = "audio_stylized_speaker"
+    data_path = "../audio_datasets/audio_stylized_speaker"
     num_workers = 8
     prefetch_factor = 8
     limit = None
+    augment_audio = True 
     
     # Model params
     device = "gpu" # "gpu" or "cpu"
-    embed_dim = 256
-    t_embed_dim = 256
+    embed_dim = 304#256
+    t_embed_dim = 512
     cond_embed_dim = 128
     num_blocks = 3
     # blk_types = [
@@ -28,21 +29,21 @@ def train():
     #     ["res", "atn", "res", "cond3", "ctx"],
     # ]
     blk_types = [
-        ["res", "fullctx", "res"],
-        ["res", "fullctx", "res"],
-        ["res", "fullctx", "res"],
+        ["res", "fullctx", "res", "fullctx"],
+        ["res", "fullctx", "res", "fullctx"],
+        ["res", "fullctx", "res", "fullctx"],
     ]
     use_noise = True
-    noise_scheduler_type = "cosine"
+    noise_scheduler_type = "linear"
     prediction_strategy = "audio"               # "noise" to predict noise, "audio" to predict stylized audio
     text_encoder_type = "T5"                    # CLIP or T5
     optim_8bit = False
     
     # Training params
-    batch_size = 14#64
+    batch_size = 32#64
     lr = 1e-4
     save_every_steps = 5000
-    accumulation_steps = 4
+    accumulation_steps = 1
     use_scheduler = True
     sample_dir = "audio_samples_audio"
     checkpoints_dir = "checkpoints_audio"
@@ -56,8 +57,8 @@ def train():
     
     
     
-     # Create the WAVDataset
-    dataset = WavDataset(data_path, load_in_memory=False, use_noise=use_noise, limit=limit)
+    # Create the WAVDataset
+    dataset = WavDataset(data_path, augment_audio=augment_audio, load_in_memory=False, use_noise=use_noise, limit=limit)
     
     
     

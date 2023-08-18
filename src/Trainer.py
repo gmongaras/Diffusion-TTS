@@ -164,7 +164,7 @@ class Trainer():
             scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=1e-6) if self.scheduler_checkpoint is None else self.scheduler_checkpoint
             # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=10000*len(self.dataloader), eta_min=1e-6) if self.scheduler_checkpoint is None else self.scheduler_checkpoint
             # https://github.com/Tony-Y/pytorch_warmup
-            warmup_scheduler = warmup.LinearWarmup(optimizer, warmup_period=100)
+            warmup_scheduler = warmup.UntunedLinearWarmup(optimizer)
         
         if self.use_amp:
             grad_scaler = torch.cuda.amp.GradScaler()

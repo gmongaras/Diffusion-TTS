@@ -19,8 +19,8 @@ def train():
     
     # Model params
     device = "gpu" # "gpu" or "cpu"
-    embed_dim = 304#256
-    t_embed_dim = 512
+    embed_dim = 296#256
+    t_embed_dim = 450
     cond_embed_dim = 128
     num_blocks = 3
     # blk_types = [

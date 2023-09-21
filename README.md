@@ -1,5 +1,5 @@
-# RoVoLaD-name-subject-to-change-
-RoVoLaD - Robot voice to stylized voice latent diffusion model
+# Diffusion TTS
+Trying to make a diffusion model for TTS
 
 
 # Tests and Ablations
